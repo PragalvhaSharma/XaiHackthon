@@ -18,14 +18,14 @@ const JOBS_DATA = [
 
 const CANDIDATES_DATA = [
   // Dev data - Pranav in research stage
-  { id: "dev-1", jobId: "swe-ai", name: "Pranav Karthik", x: "pranavkarthik__", stage: "research" },
+  { id: "dev-1", jobId: "swe-ai", name: "Pranav Karthik", x: "pranavkarthik__", stage: "research", researchStatus: "pending" },
   // Mock candidates in various stages
-  { id: "mock-1", jobId: "swe-ai", name: "Sarah Chen", x: "sarahcodes", stage: "review", score: 87 },
-  { id: "mock-2", jobId: "swe-ai", name: "Marcus Johnson", x: "marcusdev", stage: "screening", score: 72 },
-  { id: "mock-3", jobId: "swe-ai", name: "Elena Rodriguez", x: "elenaml", stage: "outreach", score: 91 },
-  { id: "mock-4", jobId: "swe-ai", name: "James Park", x: "jamespark_ai", stage: "ranking", score: 68 },
-  { id: "mock-5", jobId: "swe-ai", name: "Aisha Patel", x: "aisha_builds", stage: "research" },
-  { id: "mock-6", jobId: "swe-ai", name: "David Kim", x: "davidkimml", stage: "discovery" },
+  { id: "mock-1", jobId: "swe-ai", name: "Sarah Chen", x: "sarahcodes", stage: "review", score: 87, researchStatus: "done" },
+  { id: "mock-2", jobId: "swe-ai", name: "Marcus Johnson", x: "marcusdev", stage: "screening", score: 72, researchStatus: "done" },
+  { id: "mock-3", jobId: "swe-ai", name: "Elena Rodriguez", x: "elenaml", stage: "outreach", score: 91, researchStatus: "done" },
+  { id: "mock-4", jobId: "swe-ai", name: "James Park", x: "jamespark_ai", stage: "ranking", score: 68, researchStatus: "done" },
+  { id: "mock-5", jobId: "swe-ai", name: "Aisha Patel", x: "aisha_builds", stage: "research", researchStatus: "pending" },
+  { id: "mock-6", jobId: "swe-ai", name: "David Kim", x: "davidkimml", stage: "discovery", researchStatus: "pending" },
 ];
 
 async function seed() {

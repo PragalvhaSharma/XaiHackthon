@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CandidateInput, ResearchResult, ResearchStep } from "@/lib/types";
+import type { ResearchProgressStep } from "@/lib/db/schema";
 
 interface Job {
   id: string;
@@ -23,6 +23,8 @@ interface Candidate {
   linkedin: string | null;
   stage: string;
   score: number | null;
+  researchStatus: string | null;
+  researchProgress: string | null;
   researchNotes: string | null;
   rawResearch: string | null;
   createdAt: string;
@@ -33,7 +35,6 @@ interface LiveActivity {
   id: number;
   candidateId: string;
   candidateName: string;
-  type: "start" | "progress" | "complete" | "error";
   message: string;
   timestamp: Date;
   icon: string;
@@ -56,13 +57,12 @@ export default function RecruiterDashboard() {
   const [activeStage, setActiveStage] = useState<PipelineStage>("research");
   const [isLoading, setIsLoading] = useState(true);
   const [liveActivity, setLiveActivity] = useState<LiveActivity[]>([]);
-  const [activeResearch, setActiveResearch] = useState<Set<string>>(new Set());
   const [newCandidateX, setNewCandidateX] = useState("");
   const [newCandidateName, setNewCandidateName] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
   const activityRef = useRef<HTMLDivElement>(null);
   const activityIdRef = useRef(0);
-  const processedRef = useRef<Set<string>>(new Set());
+  const lastProgressRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     if (activityRef.current) {
@@ -70,6 +70,7 @@ export default function RecruiterDashboard() {
     }
   }, [liveActivity]);
 
+  // Fetch jobs
   useEffect(() => {
     fetch("/api/jobs")
       .then(res => res.json())
@@ -80,166 +81,73 @@ export default function RecruiterDashboard() {
       .catch(console.error);
   }, []);
 
+  // Fetch candidates & poll for updates
   useEffect(() => {
     if (!selectedJob) return;
-    setIsLoading(true);
-    fetch(`/api/candidates?jobId=${selectedJob.id}`)
-      .then(res => res.json())
-      .then(data => {
-        setCandidates(data);
-        setIsLoading(false);
-      })
-      .catch(err => {
-        console.error(err);
-        setIsLoading(false);
-      });
-  }, [selectedJob]);
-
-  const addActivity = useCallback((
-    candidateId: string,
-    candidateName: string,
-    type: LiveActivity["type"],
-    message: string,
-    icon: string = "◆"
-  ) => {
-    setLiveActivity(prev => [...prev.slice(-100), {
-      id: activityIdRef.current++,
-      candidateId,
-      candidateName,
-      type,
-      message,
-      timestamp: new Date(),
-      icon,
-    }]);
-  }, []);
-
-  const runResearch = useCallback(async (candidate: Candidate) => {
-    if (activeResearch.has(candidate.id) || !selectedJob) return;
     
-    setActiveResearch(prev => new Set(prev).add(candidate.id));
-    addActivity(candidate.id, candidate.name, "start", `Starting deep research...`, "🚀");
-
-    const payload: CandidateInput = {
-      name: candidate.name,
-      email: candidate.email || "",
-      x: candidate.x,
-      github: candidate.github || undefined,
-      linkedin: candidate.linkedin || undefined,
-      role: selectedJob.title,
-      jobId: selectedJob.id,
-      jobTitle: selectedJob.title,
-      company: "xAI",
-    };
-
-    try {
-      const res = await fetch("/api/research", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData?.error ?? "Research failed");
-      }
-
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No response stream");
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const json = line.slice(6);
-          try {
-            const step: ResearchStep = JSON.parse(json);
-
-            if (step.type === "start" && step.message) {
-              let icon = "🔍";
-              if (step.message.includes("GitHub")) icon = "◉";
-              if (step.message.includes("LinkedIn")) icon = "in";
-              addActivity(candidate.id, candidate.name, "progress", step.message.replace(/🔍|🔎|✅|⚠️/g, '').trim(), icon);
-            } else if ((step.type === "x" || step.type === "github" || step.type === "linkedin" || step.type === "synthesis")) {
-              if (step.message) {
-                let icon = "◆";
-                if (step.type === "x") icon = "𝕏";
-                if (step.type === "github") icon = "◉";
-                if (step.type === "linkedin") icon = "in";
-                if (step.type === "synthesis") icon = "✦";
+    const fetchCandidates = () => {
+      fetch(`/api/candidates?jobId=${selectedJob.id}`)
+        .then(res => res.json())
+        .then((data: Candidate[]) => {
+          setCandidates(prev => {
+            // Check for new progress and add to activity feed
+            data.forEach(candidate => {
+              if (candidate.researchProgress) {
+                const progress: ResearchProgressStep[] = JSON.parse(candidate.researchProgress);
+                const lastSeen = lastProgressRef.current.get(candidate.id) || 0;
                 
-                const cleanMsg = step.message.replace(/🔍|🔎|✅|⚠️/g, '').trim();
-                if (!cleanMsg.includes("{}") && cleanMsg.length > 5) {
-                  addActivity(candidate.id, candidate.name, "progress", cleanMsg, icon);
-                }
+                progress.slice(lastSeen).forEach(step => {
+                  let icon = "◆";
+                  if (step.type === "x") icon = "𝕏";
+                  if (step.type === "github") icon = "◉";
+                  if (step.type === "linkedin") icon = "in";
+                  if (step.type === "synthesis") icon = "✦";
+                  if (step.type === "start") icon = "🚀";
+                  
+                  setLiveActivity(prev => [...prev.slice(-100), {
+                    id: activityIdRef.current++,
+                    candidateId: candidate.id,
+                    candidateName: candidate.name,
+                    message: step.message,
+                    timestamp: new Date(step.timestamp),
+                    icon,
+                  }]);
+                });
+                
+                lastProgressRef.current.set(candidate.id, progress.length);
               }
-            } else if (step.type === "complete") {
-              addActivity(candidate.id, candidate.name, "complete", "Research complete! Moving to ranking.", "✅");
-              
-              await fetch(`/api/candidates/${candidate.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  stage: "ranking",
-                  researchNotes: step.result.researchNotes,
-                  rawResearch: step.result.rawResearch,
-                  github: step.result.sources.github,
-                  linkedin: step.result.sources.linkedin,
-                }),
-              });
+            });
+            
+            return data;
+          });
+          setIsLoading(false);
+          
+          // Update selected candidate if it changed
+          if (selectedCandidate) {
+            const updated = data.find(c => c.id === selectedCandidate.id);
+            if (updated) setSelectedCandidate(updated);
+          }
+        })
+        .catch(console.error);
+    };
+    
+    fetchCandidates();
+    const interval = setInterval(fetchCandidates, 2000); // Poll every 2s
+    return () => clearInterval(interval);
+  }, [selectedJob, selectedCandidate?.id]);
 
-              setCandidates(prev => prev.map(c => 
-                c.id === candidate.id 
-                  ? { 
-                      ...c, 
-                      stage: "ranking",
-                      researchNotes: step.result.researchNotes,
-                      github: step.result.sources.github || null,
-                      linkedin: step.result.sources.linkedin || null,
-                    }
-                  : c
-              ));
-            } else if (step.type === "error") {
-              throw new Error(step.message);
-            }
-          } catch {}
-        }
-      }
-    } catch (err) {
-      addActivity(candidate.id, candidate.name, "error", `Error: ${err instanceof Error ? err.message : "Unknown error"}`, "❌");
-    } finally {
-      setActiveResearch(prev => {
-        const next = new Set(prev);
-        next.delete(candidate.id);
-        return next;
-      });
-    }
-  }, [activeResearch, selectedJob, addActivity]);
-
+  // Auto-start research for candidates in research stage
   useEffect(() => {
-    if (!selectedJob) return;
-    
-    const unresearchedCandidates = candidates.filter(c => 
-      c.stage === "research" && 
-      !c.researchNotes && 
-      !activeResearch.has(c.id) &&
-      !processedRef.current.has(c.id)
-    );
-    
-    if (unresearchedCandidates.length > 0 && activeResearch.size === 0) {
-      const next = unresearchedCandidates[0];
-      processedRef.current.add(next.id);
-      runResearch(next);
-    }
-  }, [candidates, selectedJob, activeResearch, runResearch]);
+    candidates
+      .filter(c => c.stage === "research" && c.researchStatus === "pending" && !c.researchNotes)
+      .forEach(candidate => {
+        fetch("/api/research/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ candidateId: candidate.id }),
+        }).catch(console.error);
+      });
+  }, [candidates]);
 
   const addCandidate = async () => {
     if (!newCandidateX.trim() || !newCandidateName.trim() || !selectedJob) return;
@@ -259,10 +167,10 @@ export default function RecruiterDashboard() {
       
       const newCandidate = await res.json();
       setCandidates(prev => [...prev, newCandidate]);
-      addActivity(newCandidate.id, newCandidate.name, "start", "Added to pipeline", "➕");
       setNewCandidateX("");
       setNewCandidateName("");
       setShowAddForm(false);
+      setSelectedCandidate(newCandidate);
     } catch (err) {
       console.error("Failed to add candidate:", err);
     }
@@ -271,7 +179,13 @@ export default function RecruiterDashboard() {
   const getCandidatesForStage = (stage: PipelineStage) => 
     candidates.filter(c => c.stage === stage);
 
+  const hasActiveResearch = candidates.some(c => c.researchStatus === "running");
   const stageCandidates = getCandidatesForStage(activeStage);
+
+  // Parse research progress for selected candidate
+  const researchProgress: ResearchProgressStep[] = selectedCandidate?.researchProgress 
+    ? JSON.parse(selectedCandidate.researchProgress) 
+    : [];
 
   if (!selectedJob) {
     return <div className="dashboard"><div className="loading">Loading...</div></div>;
@@ -283,8 +197,8 @@ export default function RecruiterDashboard() {
         <div className="sidebar-header">
           <div className="logo">xAI <span>Recruiter</span></div>
           <div className="status-indicator">
-            <span className={`status-dot ${activeResearch.size > 0 ? 'active' : ''}`} />
-            <span className="status-text">{activeResearch.size > 0 ? 'Processing' : 'Idle'}</span>
+            <span className={`status-dot ${hasActiveResearch ? 'active' : ''}`} />
+            <span className="status-text">{hasActiveResearch ? 'Processing' : 'Idle'}</span>
           </div>
         </div>
         
@@ -351,20 +265,8 @@ export default function RecruiterDashboard() {
 
             {showAddForm && activeStage === "research" && (
               <div className="add-form">
-                <input
-                  type="text"
-                  placeholder="Full name"
-                  value={newCandidateName}
-                  onChange={e => setNewCandidateName(e.target.value)}
-                  className="add-input"
-                />
-                <input
-                  type="text"
-                  placeholder="X handle (e.g. @username)"
-                  value={newCandidateX}
-                  onChange={e => setNewCandidateX(e.target.value)}
-                  className="add-input"
-                />
+                <input type="text" placeholder="Full name" value={newCandidateName} onChange={e => setNewCandidateName(e.target.value)} className="add-input" />
+                <input type="text" placeholder="@handle" value={newCandidateX} onChange={e => setNewCandidateX(e.target.value)} className="add-input" />
                 <div className="add-actions">
                   <button className="btn-ghost" onClick={() => setShowAddForm(false)}>Cancel</button>
                   <button className="btn-primary" onClick={addCandidate}>Add</button>
@@ -382,21 +284,19 @@ export default function RecruiterDashboard() {
                 </div>
               ) : (
                 stageCandidates.map(candidate => {
-                  const isActive = activeResearch.has(candidate.id);
+                  const isResearching = candidate.researchStatus === "running";
                   return (
                     <div 
                       key={candidate.id} 
-                      className={`candidate-card ${selectedCandidate?.id === candidate.id ? 'selected' : ''} ${isActive ? 'researching' : ''}`}
+                      className={`candidate-card ${selectedCandidate?.id === candidate.id ? 'selected' : ''} ${isResearching ? 'researching' : ''}`}
                       onClick={() => setSelectedCandidate(candidate)}
                     >
-                      <div className="candidate-avatar">
-                        {candidate.name.split(' ').map(n => n[0]).join('')}
-                      </div>
+                      <div className="candidate-avatar">{candidate.name.split(' ').map(n => n[0]).join('')}</div>
                       <div className="candidate-info">
                         <div className="candidate-name">{candidate.name}</div>
                         <div className="candidate-handle">@{candidate.x}</div>
                       </div>
-                      {isActive && <span className="candidate-spinner" />}
+                      {isResearching && <span className="candidate-spinner" />}
                       {candidate.score && (
                         <div className="candidate-score">
                           <span className="score-num">{candidate.score}</span>
@@ -414,14 +314,10 @@ export default function RecruiterDashboard() {
             {selectedCandidate ? (
               <>
                 <div className="detail-header">
-                  <div className="detail-avatar">
-                    {selectedCandidate.name.split(' ').map(n => n[0]).join('')}
-                  </div>
+                  <div className="detail-avatar">{selectedCandidate.name.split(' ').map(n => n[0]).join('')}</div>
                   <div className="detail-info">
                     <h3>{selectedCandidate.name}</h3>
-                    <a href={`https://x.com/${selectedCandidate.x}`} target="_blank" rel="noopener noreferrer" className="detail-handle">
-                      @{selectedCandidate.x}
-                    </a>
+                    <a href={`https://x.com/${selectedCandidate.x}`} target="_blank" rel="noopener noreferrer" className="detail-handle">@{selectedCandidate.x}</a>
                     <div className="detail-stage">
                       {PIPELINE_STAGES.find(s => s.key === selectedCandidate.stage)?.icon} {PIPELINE_STAGES.find(s => s.key === selectedCandidate.stage)?.label}
                     </div>
@@ -435,29 +331,76 @@ export default function RecruiterDashboard() {
                 </div>
 
                 <div className="detail-body">
-                  {selectedCandidate.researchNotes ? (
+                  {/* Research Progress Cards */}
+                  {(selectedCandidate.researchStatus === "running" || researchProgress.length > 0) && activeStage === "research" && (
+                    <div className="research-cards">
+                      <div className="cards-header">
+                        <h4>Deep Research</h4>
+                        {selectedCandidate.researchStatus === "running" && <span className="live-badge">LIVE</span>}
+                      </div>
+                      <div className="cards-list">
+                        {researchProgress.length === 0 && (
+                          <div className="research-card pending">
+                            <div className="card-icon">⏳</div>
+                            <div className="card-content">
+                              <div className="card-title">Initializing</div>
+                              <div className="card-detail">Starting research agent...</div>
+                            </div>
+                          </div>
+                        )}
+                        {researchProgress.map((step, i) => {
+                          const isLatest = i === researchProgress.length - 1;
+                          const isDone = step.status === "done";
+                          const isError = step.status === "error";
+                          
+                          let icon = "◆";
+                          if (step.type === "x") icon = "𝕏";
+                          if (step.type === "github") icon = "◉";
+                          if (step.type === "linkedin") icon = "in";
+                          if (step.type === "synthesis") icon = "✦";
+                          if (step.type === "start") icon = "🚀";
+                          
+                          return (
+                            <div key={step.id} className={`research-card ${isLatest ? 'latest' : ''} ${isDone ? 'done' : ''} ${isError ? 'error' : ''}`}>
+                              <div className="card-icon">{icon}</div>
+                              <div className="card-content">
+                                <div className="card-title">{step.message}</div>
+                              </div>
+                              {isLatest && selectedCandidate.researchStatus === "running" && !isDone && <div className="card-spinner" />}
+                              {isDone && <div className="card-check">✓</div>}
+                              {isError && <div className="card-error">✗</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Research Results */}
+                  {selectedCandidate.researchNotes && (
                     <div className="research-results">
                       <div className="results-header">
                         <h4>Research Summary</h4>
                         <div className="source-links">
                           <a href={`https://x.com/${selectedCandidate.x}`} target="_blank" rel="noopener noreferrer">𝕏</a>
-                          {selectedCandidate.github && (
-                            <a href={`https://github.com/${selectedCandidate.github}`} target="_blank" rel="noopener noreferrer">◉</a>
-                          )}
-                          {selectedCandidate.linkedin && (
-                            <a href={selectedCandidate.linkedin} target="_blank" rel="noopener noreferrer">in</a>
-                          )}
+                          {selectedCandidate.github && <a href={`https://github.com/${selectedCandidate.github}`} target="_blank" rel="noopener noreferrer">◉</a>}
+                          {selectedCandidate.linkedin && <a href={selectedCandidate.linkedin} target="_blank" rel="noopener noreferrer">in</a>}
                         </div>
                       </div>
                       <div className="research-content">{selectedCandidate.researchNotes}</div>
                     </div>
-                  ) : activeResearch.has(selectedCandidate.id) ? (
-                    <div className="research-in-progress">
-                      <div className="progress-spinner" />
-                      <h4>Research in Progress</h4>
-                      <p>AI is analyzing public profiles...</p>
+                  )}
+
+                  {/* Pending state */}
+                  {!selectedCandidate.researchNotes && selectedCandidate.researchStatus !== "running" && researchProgress.length === 0 && activeStage === "research" && (
+                    <div className="research-pending">
+                      <h4>Queued for Research</h4>
+                      <p>Will begin automatically</p>
                     </div>
-                  ) : activeStage !== "research" ? (
+                  )}
+
+                  {/* Mock stages */}
+                  {activeStage !== "research" && (
                     <div className="mock-section">
                       <div className="mock-icon">{PIPELINE_STAGES.find(s => s.key === activeStage)?.icon}</div>
                       <h4>{PIPELINE_STAGES.find(s => s.key === activeStage)?.label}</h4>
@@ -469,11 +412,6 @@ export default function RecruiterDashboard() {
                         {activeStage === "review" && "Recruiter reviews candidates and provides feedback to improve ranking"}
                       </p>
                       <div className="mock-badge-large">Coming Soon</div>
-                    </div>
-                  ) : (
-                    <div className="research-pending">
-                      <h4>Queued for Research</h4>
-                      <p>Will begin automatically</p>
                     </div>
                   )}
                 </div>
@@ -489,24 +427,20 @@ export default function RecruiterDashboard() {
           <div className="activity-panel">
             <div className="panel-header">
               <h2>Live Activity</h2>
-              {activeResearch.size > 0 && <span className="live-badge">LIVE</span>}
+              {hasActiveResearch && <span className="live-badge">LIVE</span>}
             </div>
             <div className="activity-feed" ref={activityRef}>
               {liveActivity.length === 0 ? (
-                <div className="activity-empty">
-                  <p>Waiting for activity...</p>
-                </div>
+                <div className="activity-empty"><p>Waiting for activity...</p></div>
               ) : (
                 liveActivity.map(activity => (
-                  <div key={activity.id} className={`activity-item ${activity.type}`}>
+                  <div key={activity.id} className="activity-item">
                     <span className="activity-icon">{activity.icon}</span>
                     <div className="activity-content">
                       <span className="activity-name">{activity.candidateName}</span>
                       <span className="activity-message">{activity.message}</span>
                     </div>
-                    <span className="activity-time">
-                      {activity.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
+                    <span className="activity-time">{activity.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
                 ))
               )}
