@@ -183,7 +183,9 @@ class XHeadHunter:
         1. Is this account a real individual who could be a job candidate? (Filter out: company accounts, bots, news outlets, parody accounts, promotional accounts)
         2. Based on their tweets, does this person appear to be a viable candidate for the given job?
         3. It might not be possible to determine the years of experience or similar fileds of a candidate based on their tweets, so you should take that into consideration when evaluating the candidate.
-        
+        4. Even if the job description asks for excellence, you should understand that it's not always possible to measure excellence based on their tweets, so you should take that into consideration when evaluating the candidate.
+        5. If you are able to determine the candidate's location and if you think that they will not be able to commute to the office due to the location, you should filter them out, don't just say that they will not be able to commute, don't assume anything.
+
         Respond with ONLY a JSON object with these exact keys:
         {
             "is_viable": true/false,

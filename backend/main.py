@@ -10,6 +10,7 @@ from x_scraper import XScraper
 from x_analyzer import analyze_profile_for_job
 from x_head_hunter import XHeadHunter
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from x_dm import XDirectMessaging
 
 load_dotenv()
 
@@ -25,7 +26,7 @@ app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HT
 
 # OAuth2 PKCE configuration
 OAUTH_REDIRECT_URI = "http://localhost:8080/callback"
-OAUTH_SCOPE = "tweet.read users.read offline.access"
+OAUTH_SCOPE = "tweet.read users.read dm.read dm.write offline.access"
 
 # In-memory storage for PKCE verifiers (keyed by state)
 # This avoids session cookie issues with OAuth cross-site redirects
@@ -102,6 +103,12 @@ def logout():
     response = make_response(jsonify({"success": True}))
     response.delete_cookie('x_token')
     return response
+
+
+@app.route('/echo')
+def echo():
+    return jsonify({"token": request.cookies.get('x_token')})
+
 
 # OAuth2 PKCE for user context authorization
 @app.route('/authorize')
@@ -426,6 +433,48 @@ def hunt_candidates_stream():
         'Access-Control-Allow-Origin': 'http://localhost:3000',
         'Access-Control-Allow-Credentials': 'true'
     })
+
+@app.route('/send-dm', methods=['POST'])
+def send_direct_message():
+    """Generate and optionally send a personalized DM to a candidate."""
+    if request.is_json:
+        data = request.json
+    else:
+        return jsonify({"error": "JSON body required"}), 400
+    
+    # Required fields
+    candidate_data = data.get('candidate_data')
+    job_description = data.get('job_description')
+    company_name = data.get('company_name')
+    recruiter_name = data.get('recruiter_name')
+    test_link = data.get('test_link')
+    
+    if not candidate_data:
+        return jsonify({"error": "candidate_data is required"}), 400
+    if not job_description:
+        return jsonify({"error": "job_description is required"}), 400
+    if not company_name:
+        return jsonify({"error": "company_name is required"}), 400
+    if not recruiter_name:
+        return jsonify({"error": "recruiter_name is required"}), 400
+    
+    try:
+        x_client = get_x_authenticated_client()
+        xai_client = get_xai_authenticated_client()
+        dm_handler = XDirectMessaging(xai_client=xai_client, x_client=x_client)
+        
+        result = dm_handler.generate_and_send(
+            candidate_data=candidate_data,
+            job_description=job_description,
+            company_name=company_name,
+            recruiter_name=recruiter_name,
+            test_link=test_link
+        )
+        
+        return jsonify(result)
+    except Exception as e:
+        print(f"Error with DM: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
