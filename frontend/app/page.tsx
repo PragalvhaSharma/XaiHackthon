@@ -11,22 +11,23 @@ interface Job {
   type: string;
 }
 
-const JOBS: Job[] = [
-  { id: "swe-ai", title: "Software Engineer, AI Infrastructure", team: "Engineering", location: "San Francisco", type: "Full-time" },
-  { id: "swe-platform", title: "Software Engineer, Platform", team: "Engineering", location: "Remote", type: "Full-time" },
-  { id: "ml-research", title: "Machine Learning Researcher", team: "Research", location: "San Francisco", type: "Full-time" },
-  { id: "pm-ai", title: "Product Manager, AI Products", team: "Product", location: "San Francisco", type: "Full-time" },
-  { id: "gtm-enterprise", title: "Enterprise Account Executive", team: "Sales", location: "New York", type: "Full-time" },
-];
-
 type PipelineStage = "discovery" | "research" | "ranking" | "outreach" | "screening" | "review";
 
 interface Candidate {
   id: string;
+  jobId: string | null;
   name: string;
+  email: string | null;
   x: string;
-  stage: PipelineStage;
-  score?: number;
+  github: string | null;
+  linkedin: string | null;
+  stage: string;
+  score: number | null;
+  researchNotes: string | null;
+  rawResearch: string | null;
+  createdAt: string;
+  updatedAt: string;
+  // Local state for UI
   research?: ResearchResult;
   researchProgress?: {
     x: { status: string; message: string };
@@ -46,26 +47,46 @@ const PIPELINE_STAGES: { key: PipelineStage; label: string; icon: string; descri
   { key: "review", label: "Recruiter Review", icon: "✓", description: "Approve or deny" },
 ];
 
-const MOCK_CANDIDATES: Candidate[] = [
-  { id: "1", name: "Sarah Chen", x: "sarahcodes", stage: "review", score: 87 },
-  { id: "2", name: "Marcus Johnson", x: "marcusdev", stage: "screening", score: 72 },
-  { id: "3", name: "Elena Rodriguez", x: "elenaml", stage: "outreach", score: 91 },
-  { id: "4", name: "James Park", x: "jamespark_ai", stage: "ranking", score: 68 },
-  { id: "5", name: "Aisha Patel", x: "aisha_builds", stage: "research" },
-  { id: "6", name: "David Kim", x: "davidkimml", stage: "discovery" },
-];
-
 export default function RecruiterDashboard() {
-  const [selectedJob, setSelectedJob] = useState<Job>(JOBS[0]);
-  const [candidates, setCandidates] = useState<Candidate[]>(MOCK_CANDIDATES);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [activeStage, setActiveStage] = useState<PipelineStage>("research");
   const [isResearching, setIsResearching] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [newCandidateX, setNewCandidateX] = useState("");
   const [newCandidateName, setNewCandidateName] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
   const liveLogRef = useRef<HTMLDivElement>(null);
   const msgIdRef = useRef(0);
+
+  // Fetch jobs on mount
+  useEffect(() => {
+    fetch("/api/jobs")
+      .then(res => res.json())
+      .then(data => {
+        setJobs(data);
+        if (data.length > 0) setSelectedJob(data[0]);
+      })
+      .catch(console.error);
+  }, []);
+
+  // Fetch candidates when job changes
+  useEffect(() => {
+    if (!selectedJob) return;
+    setIsLoading(true);
+    fetch(`/api/candidates?jobId=${selectedJob.id}`)
+      .then(res => res.json())
+      .then(data => {
+        setCandidates(data);
+        setIsLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setIsLoading(false);
+      });
+  }, [selectedJob]);
 
   useEffect(() => {
     if (liveLogRef.current) {
@@ -77,7 +98,7 @@ export default function RecruiterDashboard() {
     candidates.filter(c => c.stage === stage);
 
   const runResearch = useCallback(async (candidate: Candidate) => {
-    if (isResearching) return;
+    if (isResearching || !selectedJob) return;
     setIsResearching(true);
     
     setCandidates(prev => prev.map(c => 
@@ -105,8 +126,10 @@ export default function RecruiterDashboard() {
 
     const payload: CandidateInput = {
       name: candidate.name,
-      email: "",
+      email: candidate.email || "",
       x: candidate.x,
+      github: candidate.github || undefined,
+      linkedin: candidate.linkedin || undefined,
       role: selectedJob.title,
       jobId: selectedJob.id,
       jobTitle: selectedJob.title,
@@ -162,9 +185,30 @@ export default function RecruiterDashboard() {
               ));
             } else if (step.type === "complete") {
               addLiveMessage("✅ Research complete!");
+              
+              // Update in database
+              await fetch(`/api/candidates/${candidate.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  stage: "ranking",
+                  researchNotes: step.result.researchNotes,
+                  rawResearch: step.result.rawResearch,
+                  github: step.result.sources.github,
+                  linkedin: step.result.sources.linkedin,
+                }),
+              });
+
               setCandidates(prev => prev.map(c => 
                 c.id === candidate.id 
-                  ? { ...c, research: step.result, stage: "ranking" as PipelineStage }
+                  ? { 
+                      ...c, 
+                      research: step.result, 
+                      stage: "ranking",
+                      researchNotes: step.result.researchNotes,
+                      github: step.result.sources.github || null,
+                      linkedin: step.result.sources.linkedin || null,
+                    }
                   : c
               ));
             } else if (step.type === "error") {
@@ -180,35 +224,71 @@ export default function RecruiterDashboard() {
     }
   }, [isResearching, selectedJob]);
 
-  const addCandidate = () => {
-    if (!newCandidateX.trim() || !newCandidateName.trim()) return;
-    const newCandidate: Candidate = {
-      id: Date.now().toString(),
-      name: newCandidateName,
-      x: newCandidateX.replace("@", ""),
-      stage: "research",
-    };
-    setCandidates(prev => [...prev, newCandidate]);
-    setNewCandidateX("");
-    setNewCandidateName("");
-    setShowAddForm(false);
-    setSelectedCandidate(newCandidate);
+  const addCandidate = async () => {
+    if (!newCandidateX.trim() || !newCandidateName.trim() || !selectedJob) return;
+    
+    try {
+      const res = await fetch("/api/candidates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newCandidateName,
+          x: newCandidateX.replace("@", ""),
+          jobId: selectedJob.id,
+        }),
+      });
+      
+      if (!res.ok) throw new Error("Failed to add candidate");
+      
+      const newCandidate = await res.json();
+      setCandidates(prev => [...prev, newCandidate]);
+      setNewCandidateX("");
+      setNewCandidateName("");
+      setShowAddForm(false);
+      setSelectedCandidate(newCandidate);
+    } catch (err) {
+      console.error("Failed to add candidate:", err);
+    }
   };
 
-  const moveCandidate = (candidate: Candidate, direction: "forward" | "back") => {
+  const moveCandidate = async (candidate: Candidate, direction: "forward" | "back") => {
     const stageOrder: PipelineStage[] = ["discovery", "research", "ranking", "outreach", "screening", "review"];
-    const currentIdx = stageOrder.indexOf(candidate.stage);
+    const currentIdx = stageOrder.indexOf(candidate.stage as PipelineStage);
     const newIdx = direction === "forward" ? currentIdx + 1 : currentIdx - 1;
     if (newIdx < 0 || newIdx >= stageOrder.length) return;
     
-    setCandidates(prev => prev.map(c => 
-      c.id === candidate.id 
-        ? { ...c, stage: stageOrder[newIdx] }
-        : c
-    ));
+    const newStage = stageOrder[newIdx];
+    
+    try {
+      await fetch(`/api/candidates/${candidate.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage: newStage }),
+      });
+      
+      setCandidates(prev => prev.map(c => 
+        c.id === candidate.id 
+          ? { ...c, stage: newStage }
+          : c
+      ));
+      
+      if (selectedCandidate?.id === candidate.id) {
+        setSelectedCandidate({ ...selectedCandidate, stage: newStage });
+      }
+    } catch (err) {
+      console.error("Failed to move candidate:", err);
+    }
   };
 
   const stageCandidates = getCandidatesForStage(activeStage);
+
+  if (!selectedJob) {
+    return (
+      <div className="dashboard">
+        <div className="loading">Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="dashboard">
@@ -220,7 +300,7 @@ export default function RecruiterDashboard() {
         <div className="sidebar-section">
           <div className="sidebar-label">Jobs</div>
           <div className="job-list-sidebar">
-            {JOBS.map(job => (
+            {jobs.map(job => (
               <button
                 key={job.id}
                 className={`job-btn ${selectedJob.id === job.id ? 'active' : ''}`}
@@ -319,7 +399,12 @@ export default function RecruiterDashboard() {
             )}
 
             <div className="candidates-list">
-              {stageCandidates.length === 0 ? (
+              {isLoading ? (
+                <div className="empty-state">
+                  <span className="empty-icon">⏳</span>
+                  <p>Loading candidates...</p>
+                </div>
+              ) : stageCandidates.length === 0 ? (
                 <div className="empty-state">
                   <span className="empty-icon">{PIPELINE_STAGES.find(s => s.key === activeStage)?.icon}</span>
                   <p>No candidates in this stage</p>
@@ -344,13 +429,13 @@ export default function RecruiterDashboard() {
                         <span className="score-label">score</span>
                       </div>
                     )}
-                    {activeStage === "research" && !candidate.research && (
+                    {activeStage === "research" && !candidate.researchNotes && (
                       <button 
                         className="research-btn"
                         onClick={(e) => { e.stopPropagation(); runResearch(candidate); }}
                         disabled={isResearching}
                       >
-                        {isResearching && selectedCandidate?.id === candidate.id ? "Researching..." : "Research"}
+                        {isResearching && selectedCandidate?.id === candidate.id ? "..." : "Research"}
                       </button>
                     )}
                   </div>
@@ -421,23 +506,21 @@ export default function RecruiterDashboard() {
                             );
                           })}
                       </div>
-                    ) : selectedCandidate.research ? (
+                    ) : selectedCandidate.researchNotes ? (
                       <div className="research-complete">
                         <div className="research-status">✅ Research Complete</div>
                         <div className="research-notes">
-                          {selectedCandidate.research.researchNotes}
+                          {selectedCandidate.researchNotes}
                         </div>
                         <div className="research-sources">
                           <h4>Sources</h4>
                           <div className="source-links">
-                            {selectedCandidate.research.sources.x && (
-                              <a href={`https://x.com/${selectedCandidate.research.sources.x}`} target="_blank" rel="noopener noreferrer">𝕏 @{selectedCandidate.research.sources.x}</a>
+                            <a href={`https://x.com/${selectedCandidate.x}`} target="_blank" rel="noopener noreferrer">𝕏 @{selectedCandidate.x}</a>
+                            {selectedCandidate.github && (
+                              <a href={`https://github.com/${selectedCandidate.github}`} target="_blank" rel="noopener noreferrer">◉ {selectedCandidate.github}</a>
                             )}
-                            {selectedCandidate.research.sources.github && (
-                              <a href={`https://github.com/${selectedCandidate.research.sources.github}`} target="_blank" rel="noopener noreferrer">◉ {selectedCandidate.research.sources.github}</a>
-                            )}
-                            {selectedCandidate.research.sources.linkedin && (
-                              <a href={selectedCandidate.research.sources.linkedin} target="_blank" rel="noopener noreferrer">in LinkedIn</a>
+                            {selectedCandidate.linkedin && (
+                              <a href={selectedCandidate.linkedin} target="_blank" rel="noopener noreferrer">in LinkedIn</a>
                             )}
                           </div>
                         </div>
