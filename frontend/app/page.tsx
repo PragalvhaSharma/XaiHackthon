@@ -115,6 +115,8 @@ export default function RecruiterDashboard() {
   const [activeStage, setActiveStage] = useState<PipelineStage>("discovery");
   const [isLoading, setIsLoading] = useState(true);
   const [liveActivity, setLiveActivity] = useState<LiveActivity[]>([]);
+  const [huntLog, setHuntLog] = useState<string[]>([]);
+  const huntLogRef = useRef<HTMLDivElement>(null);
   const [newCandidateX, setNewCandidateX] = useState("");
   const [newCandidateName, setNewCandidateName] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
@@ -129,6 +131,12 @@ export default function RecruiterDashboard() {
       activityRef.current.scrollTop = activityRef.current.scrollHeight;
     }
   }, [liveActivity]);
+
+  useEffect(() => {
+    if (huntLogRef.current) {
+      huntLogRef.current.scrollTop = huntLogRef.current.scrollHeight;
+    }
+  }, [huntLog]);
 
   // Check X auth status
   useEffect(() => {
@@ -387,6 +395,7 @@ export default function RecruiterDashboard() {
     
     setIsHunting(true);
     setActiveStage("discovery"); // Show discovery stage during hunt
+    setHuntLog([`Starting hunt for ${selectedJob.title}`]);
 
     try {
       const res = await fetch("/api/hunt", {
@@ -424,6 +433,7 @@ export default function RecruiterDashboard() {
             const data = JSON.parse(line.slice(6));
             
             if (data.type === "start" || data.type === "progress") {
+              setHuntLog(prev => [...prev.slice(-200), data.message]);
               setLiveActivity(prev => [...prev.slice(-100), {
                 id: activityIdRef.current++,
                 candidateId: "",
@@ -433,6 +443,7 @@ export default function RecruiterDashboard() {
                 icon: "🔍",
               }]);
             } else if (data.type === "stats") {
+              setHuntLog(prev => [...prev.slice(-200), `${data.totalSearched} searched → ${data.totalViable} viable`]);
               // Show the funnel stats
               setLiveActivity(prev => [...prev.slice(-100), {
                 id: activityIdRef.current++,
@@ -443,6 +454,7 @@ export default function RecruiterDashboard() {
                 icon: "📊",
               }]);
             } else if (data.type === "candidate") {
+              setHuntLog(prev => [...prev.slice(-200), `Added @${data.candidate.x} (${data.candidate.name})`]);
               // Add new candidate to the list
               setCandidates(prev => [...prev, data.candidate]);
               
@@ -456,6 +468,7 @@ export default function RecruiterDashboard() {
                 icon: "🎯",
               }]);
             } else if (data.type === "skip") {
+              setHuntLog(prev => [...prev.slice(-200), `Skipped: ${data.message}`]);
               // Skip silently or show in activity
               setLiveActivity(prev => [...prev.slice(-100), {
                 id: activityIdRef.current++,
@@ -466,6 +479,7 @@ export default function RecruiterDashboard() {
                 icon: "⏭️",
               }]);
             } else if (data.type === "complete") {
+              setHuntLog(prev => [...prev.slice(-200), data.message]);
               setLiveActivity(prev => [...prev.slice(-100), {
                 id: activityIdRef.current++,
                 candidateId: "",
@@ -475,6 +489,7 @@ export default function RecruiterDashboard() {
                 icon: "🎉",
               }]);
             } else if (data.type === "error") {
+              setHuntLog(prev => [...prev.slice(-200), `Error: ${data.message}`]);
               setLiveActivity(prev => [...prev.slice(-100), {
                 id: activityIdRef.current++,
                 candidateId: "",
@@ -489,6 +504,7 @@ export default function RecruiterDashboard() {
       }
     } catch (err) {
       console.error("Hunt failed:", err);
+      setHuntLog(prev => [...prev.slice(-200), `Hunt failed: ${err instanceof Error ? err.message : "Unknown error"}`]);
       setLiveActivity(prev => [...prev.slice(-100), {
         id: activityIdRef.current++,
         candidateId: "",
@@ -908,6 +924,29 @@ export default function RecruiterDashboard() {
           </div>
 
           <div className="detail-panel">
+            {isHunting && activeStage === "discovery" && stageCandidates.length === 0 && (
+              <div className="hunt-log-card" ref={huntLogRef}>
+                <div className="hunt-log-header">
+                  <div>
+                    <h3>Hunt Log</h3>
+                    <p>Streaming steps from backend</p>
+                  </div>
+                  <span className="live-badge">LIVE</span>
+                </div>
+                <div className="hunt-log-scroll">
+                  {huntLog.length === 0 ? (
+                    <div className="activity-empty"><p>Awaiting hunt output...</p></div>
+                  ) : (
+                    huntLog.map((line, idx) => (
+                      <div key={`${line}-${idx}`} className="hunt-log-line">
+                        <span className="hunt-log-dot">•</span>
+                        <span className="hunt-log-text">{line}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
             {selectedCandidate ? (
               <>
                 <div className="detail-header">
@@ -1121,6 +1160,7 @@ export default function RecruiterDashboard() {
               )}
             </div>
           </div>
+
         </div>
       </main>
     </div>
