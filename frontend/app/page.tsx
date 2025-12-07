@@ -188,6 +188,77 @@ export default function RecruiterDashboard() {
   // Track in-flight research (client-side only)
   const [liveResearchProgress, setLiveResearchProgress] = useState<Map<string, ResearchProgressStep[]>>(new Map());
   const researchingRef = useRef<Set<string>>(new Set());
+  const rankingRef = useRef<Set<string>>(new Set());
+  const [rankingCandidates, setRankingCandidates] = useState<Set<string>>(new Set());
+
+  // Start ranking for a candidate
+  const startRanking = async (candidate: Candidate) => {
+    if (rankingRef.current.has(candidate.id) || candidate.score) return;
+    rankingRef.current.add(candidate.id);
+    setRankingCandidates(prev => new Set(prev).add(candidate.id));
+
+    // Add activity
+    setLiveActivity(prev => [...prev.slice(-100), {
+      id: activityIdRef.current++,
+      candidateId: candidate.id,
+      candidateName: candidate.name,
+      message: "Starting AI ranking...",
+      timestamp: new Date(),
+      icon: "📊",
+    }]);
+
+    try {
+      const res = await fetch("/api/rank", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidateId: candidate.id,
+          jobId: candidate.jobId,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Ranking failed");
+      }
+
+      const result = await res.json();
+
+      // Update local state
+      setCandidates(prev => prev.map(c => 
+        c.id === candidate.id 
+          ? { ...c, score: result.score, stage: "outreach" }
+          : c
+      ));
+
+      // Add success activity
+      setLiveActivity(prev => [...prev.slice(-100), {
+        id: activityIdRef.current++,
+        candidateId: candidate.id,
+        candidateName: candidate.name,
+        message: `Scored ${result.score}/100 → moved to Outreach`,
+        timestamp: new Date(),
+        icon: "✅",
+      }]);
+
+    } catch (err) {
+      console.error("Ranking failed:", err);
+      setLiveActivity(prev => [...prev.slice(-100), {
+        id: activityIdRef.current++,
+        candidateId: candidate.id,
+        candidateName: candidate.name,
+        message: "Ranking failed",
+        timestamp: new Date(),
+        icon: "❌",
+      }]);
+    } finally {
+      rankingRef.current.delete(candidate.id);
+      setRankingCandidates(prev => {
+        const next = new Set(prev);
+        next.delete(candidate.id);
+        return next;
+      });
+    }
+  };
 
   // Start research for a candidate
   const startResearch = async (candidate: Candidate) => {
@@ -319,6 +390,13 @@ export default function RecruiterDashboard() {
     candidates
       .filter(c => c.stage === "research" && c.researchStatus === "pending" && !c.researchNotes)
       .forEach(candidate => startResearch(candidate));
+  }, [candidates]);
+
+  // Auto-start ranking for candidates in ranking stage without a score
+  useEffect(() => {
+    candidates
+      .filter(c => c.stage === "ranking" && !c.score && c.researchNotes)
+      .forEach(candidate => startRanking(candidate));
   }, [candidates]);
 
   const resetJobForm = () => {
@@ -585,7 +663,7 @@ export default function RecruiterDashboard() {
     }).length;
   };
 
-  const hasActiveResearch = liveResearchProgress.size > 0 || isHunting;
+  const hasActiveResearch = liveResearchProgress.size > 0 || isHunting || rankingCandidates.size > 0;
   const stageCandidates = getCandidatesForStage(activeStage);
 
   // Get live progress for selected candidate (from streaming) or from DB
@@ -825,7 +903,7 @@ export default function RecruiterDashboard() {
             const count = getCumulativeCount(stage.key);
             const currentCount = getCandidatesForStage(stage.key).length;
             const isActive = activeStage === stage.key;
-            const isWorking = stage.key === "research" || stage.key === "discovery";
+                const isWorking = stage.key === "research" || stage.key === "discovery" || stage.key === "ranking";
             return (
               <button
                 key={stage.key}
@@ -944,11 +1022,12 @@ export default function RecruiterDashboard() {
               ) : (
                 stageCandidates.map(candidate => {
                   const isResearching = researchingRef.current.has(candidate.id);
+                  const isRanking = rankingCandidates.has(candidate.id);
                   const avatarSrc = candidate.xAvatar || candidate.xAvatarUrl;
                   return (
                     <div 
                       key={candidate.id} 
-                      className={`candidate-card ${selectedCandidate?.id === candidate.id ? 'selected' : ''} ${isResearching ? 'researching' : ''}`}
+                      className={`candidate-card ${selectedCandidate?.id === candidate.id ? 'selected' : ''} ${isResearching ? 'researching' : ''} ${isRanking ? 'ranking' : ''}`}
                       onClick={() => setSelectedCandidate(candidate)}
                     >
                       <div className="candidate-avatar">
@@ -963,6 +1042,7 @@ export default function RecruiterDashboard() {
                         <div className="candidate-handle">@{candidate.x}</div>
                       </div>
                       {isResearching && <span className="candidate-spinner" />}
+                      {isRanking && <span className="candidate-spinner" />}
                       {candidate.score && (
                         <div className="candidate-score">
                           <span className="score-num">{candidate.score}</span>
@@ -1202,13 +1282,76 @@ export default function RecruiterDashboard() {
                     </div>
                   )}
 
+                  {/* Ranking Stage */}
+                  {activeStage === "ranking" && (
+                    <div className="ranking-detail">
+                      {rankingCandidates.has(selectedCandidate.id) ? (
+                        <div className="ranking-in-progress">
+                          <div className="ranking-spinner-container">
+                            <span className="ranking-spinner" />
+                          </div>
+                          <h4>AI Ranking in Progress</h4>
+                          <p>Grok is evaluating this candidate against the job requirements...</p>
+                        </div>
+                      ) : selectedCandidate.score ? (
+                        <div className="ranking-complete">
+                          <div className="score-display">
+                            <div className={`score-circle ${selectedCandidate.score >= 75 ? 'excellent' : selectedCandidate.score >= 60 ? 'good' : selectedCandidate.score >= 40 ? 'moderate' : 'poor'}`}>
+                              <span className="score-number">{selectedCandidate.score}</span>
+                              <span className="score-max">/100</span>
+                            </div>
+                            <div className="score-label">
+                              {selectedCandidate.score >= 90 ? "Exceptional Fit" :
+                               selectedCandidate.score >= 75 ? "Strong Fit" :
+                               selectedCandidate.score >= 60 ? "Good Fit" :
+                               selectedCandidate.score >= 40 ? "Moderate Fit" : "Needs Review"}
+                            </div>
+                          </div>
+                          <div className="ranking-actions">
+                            <button 
+                              className="btn-primary"
+                              onClick={async () => {
+                                await fetch(`/api/candidates/${selectedCandidate.id}`, {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ stage: "outreach" }),
+                                });
+                                setCandidates(prev => prev.map(c => 
+                                  c.id === selectedCandidate.id ? { ...c, stage: "outreach" } : c
+                                ));
+                                setActiveStage("outreach");
+                              }}
+                            >
+                              ✉️ Move to Outreach
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="ranking-pending">
+                          <div className="ranking-icon">📊</div>
+                          <h4>Ready for Ranking</h4>
+                          <p>This candidate has completed research and is ready to be scored.</p>
+                          <button 
+                            className="btn-primary"
+                            onClick={() => startRanking(selectedCandidate)}
+                            disabled={!selectedCandidate.researchNotes}
+                          >
+                            🤖 Start AI Ranking
+                          </button>
+                          {!selectedCandidate.researchNotes && (
+                            <p className="ranking-hint">Complete research first to enable ranking</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Mock stages */}
-                  {activeStage !== "research" && activeStage !== "discovery" && (
+                  {activeStage !== "research" && activeStage !== "discovery" && activeStage !== "ranking" && (
                     <div className="mock-section">
                       <div className="mock-icon">{PIPELINE_STAGES.find(s => s.key === activeStage)?.icon}</div>
                       <h4>{PIPELINE_STAGES.find(s => s.key === activeStage)?.label}</h4>
                       <p className="mock-description">
-                        {activeStage === "ranking" && "Candidates are scored against a comprehensive rubric based on research data"}
                         {activeStage === "outreach" && "Personalized DM content generated based on deep research findings"}
                         {activeStage === "screening" && "AI conducts phone screen asking about background, projects, and research"}
                         {activeStage === "review" && "Recruiter reviews candidates and provides feedback to improve ranking"}

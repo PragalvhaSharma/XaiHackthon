@@ -10,6 +10,7 @@ from x_scraper import XScraper
 from x_analyzer import analyze_profile_for_job
 from x_head_hunter import XHeadHunter
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from RLloop.grokScore import rank_candidate, CandidateScore
 
 load_dotenv()
 
@@ -426,6 +427,31 @@ def hunt_candidates_stream():
         'Access-Control-Allow-Origin': 'http://localhost:3000',
         'Access-Control-Allow-Credentials': 'true'
     })
+
+@app.route('/rank', methods=['POST'])
+def rank_candidate_endpoint():
+    """Rank a candidate against job requirements using Grok."""
+    if request.is_json:
+        data = request.json
+    else:
+        return jsonify({"error": "JSON body required"}), 400
+    
+    candidate_description = data.get('candidate_description')
+    job_requirements = data.get('job_requirements')
+    
+    if not candidate_description or not job_requirements:
+        return jsonify({"error": "candidate_description and job_requirements are required"}), 400
+    
+    try:
+        result = rank_candidate(candidate_description, job_requirements)
+        return jsonify({
+            "success": True,
+            "score": result.score
+        })
+    except Exception as e:
+        print(f"Ranking error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
