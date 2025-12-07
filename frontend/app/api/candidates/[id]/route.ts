@@ -13,6 +13,15 @@ export async function GET(
       return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
     }
     
+    console.log("📊 GET /api/candidates/[id] - Fetched candidate:", {
+      id: result.id,
+      name: result.name,
+      hasResearchNotes: !!result.researchNotes,
+      hasRawResearch: !!result.rawResearch,
+      researchNotes: result.researchNotes?.substring(0, 100) + "...",
+      rawResearch: result.rawResearch ? "exists (length: " + result.rawResearch.length + ")" : "null/undefined"
+    });
+    
     return NextResponse.json(result);
   } catch (error) {
     console.error("Failed to fetch candidate:", error);

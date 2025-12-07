@@ -137,6 +137,8 @@ export default function RecruiterDashboard() {
   const [isSavingJob, setIsSavingJob] = useState(false);
   const [jobsError, setJobsError] = useState<string | null>(null);
   const [jobFormError, setJobFormError] = useState<string | null>(null);
+  const [jobUrlInput, setJobUrlInput] = useState("");
+  const [isParsingUrl, setIsParsingUrl] = useState(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [activeStage, setActiveStage] = useState<PipelineStage>("discovery");
@@ -156,6 +158,10 @@ export default function RecruiterDashboard() {
   const liveResearchProgressRef = useRef<Map<string, ResearchProgressStep[]>>(new Map());
   const [generatingDM, setGeneratingDM] = useState<Set<string>>(new Set());
   const [sendingDM, setSendingDM] = useState<Set<string>>(new Set());
+  
+  // RL Rescore state - for demonstrating self-improving AI
+  const [rescoring, setRescoring] = useState<Set<string>>(new Set());
+  const [rescoreResults, setRescoreResults] = useState<Map<string, { oldScore: number; newScore: number; calibrationApplied: boolean }>>(new Map());
 
   useEffect(() => {
     if (activityRef.current) {
@@ -282,6 +288,81 @@ export default function RecruiterDashboard() {
     } finally {
       rankingRef.current.delete(candidate.id);
       setRankingCandidates(prev => {
+        const next = new Set(prev);
+        next.delete(candidate.id);
+        return next;
+      });
+    }
+  };
+
+  // Rescore candidate with RL calibration (self-improving AI demo)
+  const rescoreCandidate = async (candidate: Candidate) => {
+    if (!selectedJob || rescoring.has(candidate.id)) return;
+    
+    const oldScore = candidate.score || 0;
+    setRescoring(prev => new Set(prev).add(candidate.id));
+    
+    setLiveActivity(prev => [...prev.slice(-100), {
+      id: activityIdRef.current++,
+      candidateId: candidate.id,
+      candidateName: candidate.name,
+      message: "🔄 Rescoring with recruiter feedback...",
+      timestamp: new Date(),
+      icon: "🧠",
+    }]);
+
+    try {
+      const res = await fetch("/api/rank", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidateId: candidate.id,
+          jobId: selectedJob.id,
+        }),
+      });
+
+      const result = await res.json();
+      
+      if (result.success) {
+        // Store before/after for display
+        setRescoreResults(prev => new Map(prev).set(candidate.id, {
+          oldScore,
+          newScore: result.score,
+          calibrationApplied: result.calibration_applied || false,
+        }));
+        
+        // Update candidate in state
+        setCandidates(prev => prev.map(c => 
+          c.id === candidate.id ? { ...c, score: result.score } : c
+        ));
+        if (selectedCandidate?.id === candidate.id) {
+          setSelectedCandidate({ ...selectedCandidate, score: result.score });
+        }
+        
+        const scoreDiff = result.score - oldScore;
+        const diffText = scoreDiff > 0 ? `+${scoreDiff}` : `${scoreDiff}`;
+        
+        setLiveActivity(prev => [...prev.slice(-100), {
+          id: activityIdRef.current++,
+          candidateId: candidate.id,
+          candidateName: candidate.name,
+          message: `✨ Rescored: ${oldScore} → ${result.score} (${diffText}) ${result.calibration_applied ? '• Calibration applied' : ''}`,
+          timestamp: new Date(),
+          icon: "🎯",
+        }]);
+      }
+    } catch (err) {
+      console.error("Rescore failed:", err);
+      setLiveActivity(prev => [...prev.slice(-100), {
+        id: activityIdRef.current++,
+        candidateId: candidate.id,
+        candidateName: candidate.name,
+        message: "Rescore failed",
+        timestamp: new Date(),
+        icon: "❌",
+      }]);
+    } finally {
+      setRescoring(prev => {
         const next = new Set(prev);
         next.delete(candidate.id);
         return next;
@@ -668,6 +749,46 @@ export default function RecruiterDashboard() {
       description: "",
     });
     setJobFormError(null);
+    setJobUrlInput("");
+  };
+
+  const parseJobUrl = async () => {
+    if (!jobUrlInput.trim()) {
+      setJobFormError("Please enter a job URL");
+      return;
+    }
+
+    setIsParsingUrl(true);
+    setJobFormError(null);
+
+    try {
+      const res = await fetch("/api/jobs/parse-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: jobUrlInput.trim() }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error || "Failed to parse job URL");
+      }
+
+      const parsed = await res.json();
+      
+      // Pre-fill the form with parsed data
+      setJobForm({
+        title: parsed.title || "",
+        team: parsed.team || "",
+        location: parsed.location || "",
+        type: parsed.type || "Full-time",
+        description: parsed.description || "",
+      });
+    } catch (error) {
+      console.error("Parse URL error:", error);
+      setJobFormError(error instanceof Error ? error.message : "Failed to parse job URL");
+    } finally {
+      setIsParsingUrl(false);
+    }
   };
 
   const createJob = async () => {
@@ -962,7 +1083,7 @@ export default function RecruiterDashboard() {
       )}
 
       {showJobForm && (
-        <div className="modal-backdrop" onClick={() => { if (!isSavingJob) { setShowJobForm(false); resetJobForm(); } }}>
+        <div className="modal-backdrop" onClick={() => { if (!isSavingJob && !isParsingUrl) { setShowJobForm(false); resetJobForm(); } }}>
           <div className="modal-card job-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <div>
@@ -971,12 +1092,40 @@ export default function RecruiterDashboard() {
               </div>
               <button 
                 className="modal-close" 
-                onClick={() => { if (!isSavingJob) { setShowJobForm(false); resetJobForm(); } }}
+                onClick={() => { if (!isSavingJob && !isParsingUrl) { setShowJobForm(false); resetJobForm(); } }}
               >
                 ×
               </button>
             </div>
             <div className="modal-body">
+              {/* Import from URL Section */}
+              <div className="url-import-section">
+                <label className="modal-field">
+                  <span>Import from URL</span>
+                  <div className="url-import-row">
+                    <input 
+                      className="modal-input"
+                      type="url"
+                      placeholder="Paste job posting URL (e.g., greenhouse.io, lever.co)"
+                      value={jobUrlInput}
+                      onChange={e => setJobUrlInput(e.target.value)}
+                      disabled={isParsingUrl}
+                    />
+                    <button 
+                      className="btn-primary url-import-btn"
+                      onClick={parseJobUrl}
+                      disabled={isParsingUrl || !jobUrlInput.trim()}
+                      type="button"
+                    >
+                      {isParsingUrl ? "Parsing..." : "Import"}
+                    </button>
+                  </div>
+                </label>
+                <div className="url-import-divider">
+                  <span>or fill manually</span>
+                </div>
+              </div>
+
               <div className="modal-input-grid">
                 <label className="modal-field">
                   <span>Title</span>
@@ -2020,6 +2169,61 @@ export default function RecruiterDashboard() {
                                 <label>Feedback</label>
                                 <p>{selectedCandidate.recruiterFeedback}</p>
                               </div>
+                            )}
+                          </div>
+                          
+                          {/* RL Rescore Section - Self-Improving AI Demo */}
+                          <div className="rescore-section">
+                            <div className="rescore-header">
+                              <span className="rescore-icon">🧠</span>
+                              <div>
+                                <h5>AI Self-Improvement</h5>
+                                <p className="rescore-subtitle">See how your feedback adjusts AI scoring</p>
+                              </div>
+                            </div>
+                            
+                            {rescoreResults.has(selectedCandidate.id) ? (
+                              <div className="rescore-result">
+                                <div className="score-comparison">
+                                  <div className="score-before">
+                                    <span className="score-label">Before</span>
+                                    <span className="score-value">{rescoreResults.get(selectedCandidate.id)!.oldScore}</span>
+                                  </div>
+                                  <span className="score-arrow">→</span>
+                                  <div className="score-after">
+                                    <span className="score-label">After</span>
+                                    <span className="score-value">{rescoreResults.get(selectedCandidate.id)!.newScore}</span>
+                                  </div>
+                                  <div className={`score-diff ${(rescoreResults.get(selectedCandidate.id)!.newScore - rescoreResults.get(selectedCandidate.id)!.oldScore) < 0 ? 'negative' : 'positive'}`}>
+                                    {(() => {
+                                      const diff = rescoreResults.get(selectedCandidate.id)!.newScore - rescoreResults.get(selectedCandidate.id)!.oldScore;
+                                      return diff > 0 ? `+${diff}` : diff;
+                                    })()}
+                                  </div>
+                                </div>
+                                {rescoreResults.get(selectedCandidate.id)!.calibrationApplied && (
+                                  <div className="calibration-badge">
+                                    ✓ Calibration from your feedback applied
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <button
+                                className="rescore-btn"
+                                onClick={() => rescoreCandidate(selectedCandidate)}
+                                disabled={rescoring.has(selectedCandidate.id)}
+                              >
+                                {rescoring.has(selectedCandidate.id) ? (
+                                  <>
+                                    <span className="rescore-spinner" />
+                                    Rescoring...
+                                  </>
+                                ) : (
+                                  <>
+                                    🔄 Rescore with Feedback
+                                  </>
+                                )}
+                              </button>
                             )}
                           </div>
                         </div>

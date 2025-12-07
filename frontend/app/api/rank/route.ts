@@ -40,13 +40,14 @@ export async function POST(req: NextRequest) {
     // Build candidate description from available data
     const candidateDescription = buildCandidateDescription(candidateResult);
 
-    // Call backend ranking endpoint
+    // Call backend ranking endpoint with job_id for RL self-improvement
     const response = await fetch(`${BACKEND_URL}/rank`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         candidate_description: candidateDescription,
         job_requirements: jobResult.description || jobResult.title,
+        job_id: jobId, // Enables RL calibration from recruiter feedback
       }),
     });
 
@@ -78,6 +79,8 @@ export async function POST(req: NextRequest) {
       success: true,
       score: result.score,
       candidate: updatedCandidate,
+      calibration_applied: result.calibration_applied || false,
+      calibration_info: result.calibration_info || null,
     });
   } catch (error) {
     console.error("Ranking failed:", error);

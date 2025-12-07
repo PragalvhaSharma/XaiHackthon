@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Chat API</title>
+</head>
+<body>
+    <h1>Test Chat API</h1>
+    <button onclick="testChat()">Test Basic Chat</button>
+    <button onclick="testInterview()">Test Interview Start</button>
+    <pre id="output"></pre>
+
+    <script>
+        async function testChat() {
+            const output = document.getElementById('output');
+            output.textContent = 'Testing basic chat...\n';
+
+            try {
+                const response = await fetch('/api/chat/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: [
+                            { role: 'user', content: 'Say hello and tell me a joke' }
+                        ]
+                    })
+                });
+
+                if (!response.ok) {
+                    output.textContent += `Error: ${response.status} ${response.statusText}\n`;
+                    const error = await response.text();
+                    output.textContent += error;
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    output.textContent += chunk;
+                }
+            } catch (error) {
+                output.textContent += `\nError: ${error}`;
+            }
+        }
+
+        async function testInterview() {
+            const output = document.getElementById('output');
+            output.textContent = 'Testing interview start...\n';
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: [
+                            { role: 'user', content: 'START_INTERVIEW' }
+                        ],
+                        candidate: { name: 'Test User', email: 'test@example.com' },
+                        currentScore: 30
+                    })
+                });
+
+                if (!response.ok) {
+                    output.textContent += `Error: ${response.status} ${response.statusText}\n`;
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    output.textContent += chunk;
+                }
+            } catch (error) {
+                output.textContent += `\nError: ${error}`;
+            }
+        }
+    </script>
+</body>
+</html>

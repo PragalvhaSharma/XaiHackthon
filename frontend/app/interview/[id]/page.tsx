@@ -87,16 +87,30 @@ export default function InterviewPage() {
   const sendMessage = async (content: string, currentMessages: Message[]) => {
     if (!candidate) return;
 
+    console.log("[INTERVIEW] Sending message:", content);
+    console.log("[INTERVIEW] Current score:", scoreRef.current);
+
     setIsLoading(true);
 
     try {
       const rawResearch = candidate.rawResearch ? JSON.parse(candidate.rawResearch) : {};
-      
+
+      const messagesToSend = content === "START_INTERVIEW"
+        ? [{ role: "user", content }]
+        : currentMessages;
+
+      console.log("[INTERVIEW] Calling /api/chat with:", {
+        messageCount: messagesToSend.length,
+        messages: messagesToSend,
+        currentScore: scoreRef.current,
+        candidateName: candidate.name
+      });
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [...currentMessages, { role: "user", content }],
+          messages: messagesToSend,
           researchNotes: candidate.researchNotes || "",
           rawResearch,
           candidate: {
@@ -111,7 +125,10 @@ export default function InterviewPage() {
         }),
       });
 
-      if (!response.ok) throw new Error("Chat failed");
+      if (!response.ok) {
+        console.error("[INTERVIEW] Response not OK:", response.status, response.statusText);
+        throw new Error("Chat failed");
+      }
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error("No reader");
@@ -120,118 +137,118 @@ export default function InterviewPage() {
       let extractedScore: number | null = null;
       const decoder = new TextDecoder();
 
+      console.log("[INTERVIEW] Starting to read stream...");
+
       // Add empty assistant message to stream into
       setMessages(prev => [...prev, { role: "assistant", content: "" }]);
 
       let buffer = "";
+
+      // AI SDK v5 uses data stream format with "0:" prefix for text
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log("[INTERVIEW] Stream complete");
+          break;
+        }
 
-        buffer += decoder.decode(value, { stream: true });
-        
-        // Process lines from the data stream
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        // Split by newlines to process each line
         const lines = buffer.split("\n");
         buffer = lines.pop() || ""; // Keep incomplete line in buffer
-        
+
         for (const line of lines) {
           if (!line.trim()) continue;
-          
-          // AI SDK data stream format: "type:data"
-          // 0: = text chunk
-          // 9: = tool call
-          // a: = tool result
-          const colonIndex = line.indexOf(":");
-          if (colonIndex === -1) continue;
-          
-          const prefix = line.substring(0, colonIndex);
-          const data = line.substring(colonIndex + 1);
-          
-          if (prefix === "0") {
-            // Text chunk - parse the JSON string
+
+          // Check if it's data stream format or plain text
+          if (line.startsWith("0:")) {
+            // AI SDK v5 format: "0:text" for text chunks
             try {
-              const text = JSON.parse(data);
+              const jsonStr = line.slice(2);
+              const text = JSON.parse(jsonStr);
               assistantContent += text;
-              
-              // Update the last message with streamed content
-              setMessages(prev => {
-                const updated = [...prev];
-                updated[updated.length - 1] = { role: "assistant", content: assistantContent };
-                return updated;
-              });
-            } catch {}
-          } else if (prefix === "a") {
-            // Tool result - this contains the score update
+            } catch (e) {
+              console.error("[INTERVIEW] Failed to parse text chunk:", e);
+            }
+          } else if (line.startsWith("9:")) {
+            // Tool call chunk
+            console.log("[INTERVIEW] Tool call:", line);
+          } else if (line.startsWith("a:")) {
+            // Tool result
             try {
-              const toolResults = JSON.parse(data);
-              // toolResults is an array of results
+              const jsonStr = line.slice(2);
+              const toolResults = JSON.parse(jsonStr);
+              console.log("[INTERVIEW] Tool results:", toolResults);
+
               for (const result of toolResults) {
                 if (result.result && typeof result.result.newScore === "number") {
                   extractedScore = result.result.newScore;
                   const adjustment = result.result.adjustment || (extractedScore - scoreRef.current);
-                  
                   setLastAdjustment(adjustment);
                   setCurrentScore(extractedScore);
                   scoreRef.current = extractedScore;
-                  
                   setTimeout(() => setLastAdjustment(null), 2000);
                 }
               }
-            } catch {}
+            } catch (e) {
+              console.error("[INTERVIEW] Failed to parse tool result:", e);
+            }
+          } else {
+            // Plain text line - just append it
+            assistantContent += line + "\n";
           }
+
+          // Update UI after each line
+          setMessages(prev => {
+            const updated = [...prev];
+            updated[updated.length - 1] = { role: "assistant", content: assistantContent.trim() };
+            return updated;
+          });
         }
       }
 
       // Process any remaining buffer
       if (buffer.trim()) {
-        const colonIndex = buffer.indexOf(":");
-        if (colonIndex !== -1) {
-          const prefix = buffer.substring(0, colonIndex);
-          const data = buffer.substring(colonIndex + 1);
-          
-          if (prefix === "0") {
-            try {
-              const text = JSON.parse(data);
-              assistantContent += text;
-              setMessages(prev => {
-                const updated = [...prev];
-                updated[updated.length - 1] = { role: "assistant", content: assistantContent };
-                return updated;
-              });
-            } catch {}
-          } else if (prefix === "a") {
-            try {
-              const toolResults = JSON.parse(data);
-              for (const result of toolResults) {
-                if (result.result && typeof result.result.newScore === "number") {
-                  extractedScore = result.result.newScore;
-                  const adjustment = result.result.adjustment || (extractedScore - scoreRef.current);
-                  setLastAdjustment(adjustment);
-                  setCurrentScore(extractedScore);
-                  scoreRef.current = extractedScore;
-                  setTimeout(() => setLastAdjustment(null), 2000);
-                }
-              }
-            } catch {}
-          }
+        console.log("[INTERVIEW] Remaining buffer:", buffer);
+        if (buffer.startsWith("0:")) {
+          try {
+            const jsonStr = buffer.slice(2);
+            const text = JSON.parse(jsonStr);
+            assistantContent += text;
+            setMessages(prev => {
+              const updated = [...prev];
+              updated[updated.length - 1] = { role: "assistant", content: assistantContent };
+              return updated;
+            });
+          } catch {}
         }
       }
 
-      // Fallback: also check for [SCORE/100] pattern in text (for backwards compatibility)
+      // Parse [SCORE: newScore, adjustment, reason] format
       if (extractedScore === null) {
-        const scoreMatch = assistantContent.match(/\[(\d+)\/100\]/);
+        const scoreMatch = assistantContent.match(/\[SCORE:\s*(\d+),\s*([-+]?\d+),\s*([^\]]+)\]/);
         if (scoreMatch) {
           extractedScore = parseInt(scoreMatch[1], 10);
-          const adjustment = extractedScore - scoreRef.current;
+          const adjustment = parseInt(scoreMatch[2], 10);
+          const reason = scoreMatch[3].trim();
+
+          console.log("[INTERVIEW] Parsed score from message:", {
+            newScore: extractedScore,
+            adjustment,
+            reason
+          });
+
           setLastAdjustment(adjustment);
           setCurrentScore(extractedScore);
           scoreRef.current = extractedScore;
           setTimeout(() => setLastAdjustment(null), 2000);
         }
       }
-      
-      // Clean any score text from display (in case model still outputs it)
-      const cleanedContent = assistantContent.replace(/\s*\[\d+\/100\]\s*$/, "").trim();
+
+      // Clean the score tag from display
+      const cleanedContent = assistantContent.replace(/\[SCORE:[^\]]+\]\s*$/, "").trim();
       if (cleanedContent !== assistantContent) {
         setMessages(prev => {
           const updated = [...prev];
@@ -241,17 +258,29 @@ export default function InterviewPage() {
         assistantContent = cleanedContent;
       }
 
-      // Check for auto-end conditions
-      if (extractedScore !== null) {
+      // Check for auto-end conditions (but not on START_INTERVIEW)
+      if (extractedScore !== null && content !== "START_INTERVIEW") {
+        console.log("[INTERVIEW] Checking auto-end conditions:", {
+          score: extractedScore,
+          isComplete,
+          willEnd: extractedScore >= 70 || extractedScore < 10
+        });
+
         if (extractedScore >= 70 && !isComplete) {
+          console.log("[INTERVIEW] Auto-ending: Passed with score", extractedScore);
           await completeInterview([...currentMessages, { role: "user", content }, { role: "assistant", content: assistantContent }], extractedScore, "passed");
         } else if (extractedScore < 10 && !isComplete) {
+          console.log("[INTERVIEW] Auto-ending: Failed with score", extractedScore);
           await completeInterview([...currentMessages, { role: "user", content }, { role: "assistant", content: assistantContent }], extractedScore, "failed");
         }
       }
 
     } catch (err) {
-      console.error("Chat error:", err);
+      console.error("[INTERVIEW] Chat error:", err);
+      console.error("[INTERVIEW] Error details:", {
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined
+      });
     } finally {
       setIsLoading(false);
     }
@@ -259,11 +288,19 @@ export default function InterviewPage() {
 
   // Start interview
   const startInterview = async () => {
-    if (!candidate || isStarted) return;
+    console.log("[INTERVIEW] Starting interview...");
+    console.log("[INTERVIEW] Candidate:", candidate?.name);
+
+    if (!candidate || isStarted) {
+      console.log("[INTERVIEW] Cannot start:", { hasCandidate: !!candidate, isStarted });
+      return;
+    }
+
     setIsStarted(true);
     setCurrentScore(30);
     scoreRef.current = 30;
 
+    console.log("[INTERVIEW] Updating candidate status to in_progress...");
     // Update status to in_progress
     await fetch(`/api/candidates/${candidateId}`, {
       method: "PATCH",
@@ -274,6 +311,7 @@ export default function InterviewPage() {
       }),
     });
 
+    console.log("[INTERVIEW] Sending START_INTERVIEW message...");
     // Send START_INTERVIEW to get first message
     await sendMessage("START_INTERVIEW", []);
   };
@@ -306,13 +344,16 @@ export default function InterviewPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading || isComplete) return;
-    
+
+    console.log("[INTERVIEW] Submitting user message:", input);
+
     const userMessage: Message = { role: "user", content: input };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setInput("");
-    
-    sendMessage(input, messages);
+
+    // Pass the NEW messages array that includes the user message
+    sendMessage(input, newMessages);
   };
 
   // Handle key press
@@ -437,7 +478,7 @@ export default function InterviewPage() {
                   </div>
                   <div className="message-bubble">
                     <div className="message-content">
-                      {msg.content.replace(/\s*\[\d+\/100\]\s*$/, "").trim() || (isLoading && i === messages.length - 1 ? "..." : "")}
+                      {msg.content.replace(/\[SCORE:[^\]]+\]\s*$/, "").trim() || (isLoading && i === messages.length - 1 ? "..." : "")}
                     </div>
                   </div>
                 </div>

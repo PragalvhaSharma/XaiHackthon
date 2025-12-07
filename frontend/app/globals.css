@@ -2966,6 +2966,158 @@ html, body {
   line-height: 1.5;
 }
 
+/* ==================== RL RESCORE SECTION ==================== */
+
+.rescore-section {
+  margin-top: 20px;
+  padding: 16px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(59, 130, 246, 0.08));
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 12px;
+}
+
+.rescore-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.rescore-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.rescore-header h5 {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rescore-subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rescore-btn {
+  width: 100%;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #8b5cf6, #3b82f6);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+
+.rescore-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+}
+
+.rescore-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.rescore-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.rescore-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.score-comparison {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 16px;
+  background: var(--surface);
+  border-radius: 8px;
+}
+
+.score-before, .score-after {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.score-before .score-label,
+.score-after .score-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.score-before .score-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.score-after .score-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--purple);
+}
+
+.score-arrow {
+  font-size: 20px;
+  color: var(--text-muted);
+}
+
+.score-diff {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.score-diff.positive {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.score-diff.negative {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.calibration-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #22c55e;
+}
+
 /* ==================== OUTREACH / DM STAGE ==================== */
 
 .outreach-section {
@@ -3209,4 +3361,53 @@ html, body {
   background: var(--amber-dim);
   color: var(--amber);
   border: 1px solid var(--amber);
+}
+
+/* ==================== URL IMPORT SECTION ==================== */
+
+.url-import-section {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+}
+
+.url-import-row {
+  display: flex;
+  gap: 8px;
+}
+
+.url-import-row .modal-input {
+  flex: 1;
+}
+
+.url-import-btn {
+  flex-shrink: 0;
+  min-width: 80px;
+}
+
+.url-import-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.url-import-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.url-import-divider::before,
+.url-import-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.url-import-divider span {
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
 }
