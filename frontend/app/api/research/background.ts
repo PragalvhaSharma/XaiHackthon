@@ -46,11 +46,11 @@ export async function runResearchBackground(candidateId: string) {
     let discoveredGithub = candidate.github;
     let discoveredLinkedin = candidate.linkedin;
 
-    // Phase 1: Find GitHub & LinkedIn from X
+    // Phase 1: Find GitHub & LinkedIn from X (with 30s timeout)
     addProgress(candidateId, { type: "x", status: "searching", message: `Finding GitHub & LinkedIn for @${candidate.x}...` });
     
     try {
-      const profileSearch = await generateText({
+      const profileSearchPromise = generateText({
         model: xai.responses("grok-4-1-fast-non-reasoning"),
         prompt: `Find GitHub and LinkedIn for this person:
 Name: ${candidate.name}
@@ -67,6 +67,13 @@ LINKEDIN_URL: url`,
         maxSteps: 4,
       });
 
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Profile search timeout (30s)")), 30000)
+      );
+
+      const profileSearch = await Promise.race([profileSearchPromise, timeoutPromise]) as Awaited<typeof profileSearchPromise>;
+      console.log("[Research BG] Profile search completed");
+
       const text = profileSearch.text || "";
       const ghMatch = text.match(/GITHUB_USERNAME:\s*([a-zA-Z0-9_-]+)/);
       if (ghMatch?.[1]) {
@@ -80,14 +87,15 @@ LINKEDIN_URL: url`,
       }
     } catch (err) {
       console.error("[Research BG] Profile discovery error:", err);
-      addProgress(candidateId, { type: "start", status: "error", message: "Profile discovery failed, continuing..." });
+      addProgress(candidateId, { type: "start", status: "error", message: "Profile discovery skipped, continuing..." });
     }
 
-    // Phase 2: X Research
+    // Phase 2: X Research (45s timeout)
     addProgress(candidateId, { type: "x", status: "searching", message: `Researching X profile @${candidate.x}...` });
+    console.log("[Research BG] Starting X research...");
     
     try {
-      const xResult = await generateText({
+      const xPromise = generateText({
         model: xai.responses("grok-4-1-fast-non-reasoning"),
         prompt: `Research the X/Twitter user @${candidate.x}.
 Name: ${candidate.name}
@@ -105,20 +113,27 @@ Provide a summary of their X presence.`,
         maxSteps: 5,
       });
 
+      const xResult = await Promise.race([
+        xPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("X research timeout (45s)")), 45000))
+      ]) as Awaited<typeof xPromise>;
+
       rawResearch.x = xResult.text;
       researchBlocks.push(`## X Profile (@${candidate.x})\n${xResult.text}`);
       addProgress(candidateId, { type: "x", status: "done", message: `Completed X research` });
+      console.log("[Research BG] X research completed");
     } catch (err) {
       console.error("[Research BG] X error:", err);
       addProgress(candidateId, { type: "x", status: "error", message: "X research failed" });
     }
 
-    // Phase 3: GitHub Research
+    // Phase 3: GitHub Research (45s timeout)
     if (discoveredGithub) {
       addProgress(candidateId, { type: "github", status: "searching", message: `Researching GitHub: ${discoveredGithub}...` });
+      console.log("[Research BG] Starting GitHub research...");
       
       try {
-        const ghResult = await generateText({
+        const ghPromise = generateText({
           model: xai.responses("grok-4-1-fast-non-reasoning"),
           prompt: `Research the GitHub user "${discoveredGithub}".
 Name: ${candidate.name}
@@ -133,21 +148,30 @@ Provide a technical profile.`,
           maxSteps: 5,
         });
 
+        const ghResult = await Promise.race([
+          ghPromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error("GitHub research timeout (45s)")), 45000))
+        ]) as Awaited<typeof ghPromise>;
+
         rawResearch.github = ghResult.text;
         researchBlocks.push(`## GitHub (${discoveredGithub})\n${ghResult.text}`);
         addProgress(candidateId, { type: "github", status: "done", message: `Completed GitHub research` });
+        console.log("[Research BG] GitHub research completed");
       } catch (err) {
         console.error("[Research BG] GitHub error:", err);
         addProgress(candidateId, { type: "github", status: "error", message: "GitHub research failed" });
       }
+    } else {
+      console.log("[Research BG] Skipping GitHub (not found)");
     }
 
-    // Phase 4: LinkedIn Research
+    // Phase 4: LinkedIn Research (45s timeout)
     if (discoveredLinkedin) {
       addProgress(candidateId, { type: "linkedin", status: "searching", message: `Researching LinkedIn...` });
+      console.log("[Research BG] Starting LinkedIn research...");
       
       try {
-        const liResult = await generateText({
+        const liPromise = generateText({
           model: xai.responses("grok-4-1-fast-non-reasoning"),
           prompt: `Research this LinkedIn profile: ${discoveredLinkedin}
 Name: ${candidate.name}
@@ -158,23 +182,32 @@ Provide a professional summary.`,
           maxSteps: 4,
         });
 
+        const liResult = await Promise.race([
+          liPromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error("LinkedIn research timeout (45s)")), 45000))
+        ]) as Awaited<typeof liPromise>;
+
         rawResearch.linkedin = liResult.text;
         researchBlocks.push(`## LinkedIn\n${liResult.text}`);
         addProgress(candidateId, { type: "linkedin", status: "done", message: `Completed LinkedIn research` });
+        console.log("[Research BG] LinkedIn research completed");
       } catch (err) {
         console.error("[Research BG] LinkedIn error:", err);
         addProgress(candidateId, { type: "linkedin", status: "error", message: "LinkedIn research failed" });
       }
+    } else {
+      console.log("[Research BG] Skipping LinkedIn (not found)");
     }
 
-    // Phase 5: Synthesis
+    // Phase 5: Synthesis (30s timeout)
     addProgress(candidateId, { type: "synthesis", status: "searching", message: `Synthesizing research...` });
+    console.log("[Research BG] Starting synthesis...");
     
     let synthesisNotes = researchBlocks.join("\n\n");
     
     if (researchBlocks.length > 0) {
       try {
-        const synthesis = await generateText({
+        const synthPromise = generateText({
           model: xai("grok-4-1-fast-non-reasoning"),
           prompt: `Create a candidate brief for an AI recruiter.
 
@@ -191,10 +224,18 @@ Create a brief covering:
 
 Keep it concise, 3-4 paragraphs.`,
         });
+
+        const synthesis = await Promise.race([
+          synthPromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Synthesis timeout (30s)")), 30000))
+        ]) as Awaited<typeof synthPromise>;
         synthesisNotes = synthesis.text;
+        console.log("[Research BG] Synthesis completed");
       } catch (err) {
         console.error("[Research BG] Synthesis error:", err);
       }
+    } else {
+      console.log("[Research BG] No research to synthesize, using raw blocks");
     }
 
     addProgress(candidateId, { type: "synthesis", status: "done", message: `Research complete!` });

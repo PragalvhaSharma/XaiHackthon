@@ -35,7 +35,8 @@ export async function POST(req: NextRequest) {
       email: email || null,
       github: github || null,
       linkedin: linkedin || null,
-      stage: "research",
+      stage: "discovery",
+      researchStatus: "pending",
       createdAt: new Date(),
       updatedAt: new Date(),
     };
