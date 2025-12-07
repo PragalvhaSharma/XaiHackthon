@@ -1,9 +1,18 @@
 [project]
 name = "xai"
 version = "0.1.0"
-description = "Add your description here"
+description = "Technical recruiter Flask app using X and xAI APIs"
 readme = "README.md"
 requires-python = ">=3.12"
+packages = ["backend"]
 dependencies = [
+    "flask",
     "requests>=2.32.5",
+    "xai-sdk",
+    "python-dotenv",
+    "flake8>=7.3.0",
+    "xdk>=0.4.6",
 ]
+
+[project.optional-dependencies]
+dev = ["flask[async]"]

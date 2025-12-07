@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis Results</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .candidate { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 5px; }
+        .name { font-weight: bold; font-size: 1.2em; }
+        .score { color: #1da1f2; font-size: 1.5em; }
+        .profile-link { color: #1da1f2; }
+        .json-field { margin: 5px 0; }
+        .matching-skills { background: #e8f5e8; padding: 5px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>Analysis Results for: {{ job_desc }}</h1>
+    <p>Sorted by relevance score (higher is better). Analyzed {{ results|length }} candidates.</p>
+    
+    {% if results|length == 0 %}
+    <p>No candidates were analyzed. This could mean no X profiles were found for the users.</p>
+    {% endif %}
+    
+    {% for result in results|sort(attribute='score', reverse=True) %}
+    <div class="candidate">
+        <div class="name">{{ result.name }} ({{ result.email }}) - Score: <span class="score">{{ result.score }}/10</span></div>
+        {% if result.profile_link != 'N/A' %}
+        <a href="{{ result.profile_link }}" target="_blank" class="profile-link">View X Profile</a>
+        {% endif %}
+        <div class="json-field">
+            <h3>Analysis:</h3>
+            {% if result.analysis is mapping %}
+                <p>{{ result.analysis.analysis }}</p>
+            {% else %}
+                <pre>{{ result.analysis }}</pre>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    <a href="/">Analyze New Job</a>
+</body>
+</html>
