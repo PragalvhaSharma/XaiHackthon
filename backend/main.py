@@ -437,7 +437,7 @@ def hunt_candidates_stream():
 
 @app.route('/rank', methods=['POST'])
 def rank_candidate_endpoint():
-    """Rank a candidate against job requirements using Grok."""
+    """Rank a candidate against job requirements using Grok with RL self-improvement."""
     if request.is_json:
         data = request.json
     else:
@@ -445,15 +445,31 @@ def rank_candidate_endpoint():
     
     candidate_description = data.get('candidate_description')
     job_requirements = data.get('job_requirements')
+    job_id = data.get('job_id')  # Optional: enables RL calibration
     
     if not candidate_description or not job_requirements:
         return jsonify({"error": "candidate_description and job_requirements are required"}), 400
     
     try:
-        result = rank_candidate(candidate_description, job_requirements)
+        # Pass job_id for self-improving scoring based on recruiter feedback
+        result = rank_candidate(candidate_description, job_requirements, job_id=job_id)
+        
+        # Get calibration info to return alongside score
+        calibration_applied = False
+        calibration_info = None
+        if job_id:
+            try:
+                calibration_info = compute_calibration_metrics(job_id)
+                if calibration_info and calibration_info.get('sample_count', 0) >= 2:
+                    calibration_applied = True
+            except Exception:
+                pass
+        
         return jsonify({
             "success": True,
-            "score": result.score
+            "score": result.score,
+            "calibration_applied": calibration_applied,
+            "calibration_info": calibration_info
         })
     except Exception as e:
         print(f"Ranking error: {e}")
