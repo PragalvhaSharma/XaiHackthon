@@ -117,53 +117,136 @@ export default function InterviewPage() {
       if (!reader) throw new Error("No reader");
 
       let assistantContent = "";
+      let extractedScore: number | null = null;
       const decoder = new TextDecoder();
 
       // Add empty assistant message to stream into
       setMessages(prev => [...prev, { role: "assistant", content: "" }]);
 
+      let buffer = "";
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        assistantContent += chunk;
-
-        // Update the last message with streamed content
-        setMessages(prev => {
-          const updated = [...prev];
-          updated[updated.length - 1] = { role: "assistant", content: assistantContent };
-          return updated;
-        });
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Process lines from the data stream
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          
+          // AI SDK data stream format: "type:data"
+          // 0: = text chunk
+          // 9: = tool call
+          // a: = tool result
+          const colonIndex = line.indexOf(":");
+          if (colonIndex === -1) continue;
+          
+          const prefix = line.substring(0, colonIndex);
+          const data = line.substring(colonIndex + 1);
+          
+          if (prefix === "0") {
+            // Text chunk - parse the JSON string
+            try {
+              const text = JSON.parse(data);
+              assistantContent += text;
+              
+              // Update the last message with streamed content
+              setMessages(prev => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: "assistant", content: assistantContent };
+                return updated;
+              });
+            } catch {}
+          } else if (prefix === "a") {
+            // Tool result - this contains the score update
+            try {
+              const toolResults = JSON.parse(data);
+              // toolResults is an array of results
+              for (const result of toolResults) {
+                if (result.result && typeof result.result.newScore === "number") {
+                  extractedScore = result.result.newScore;
+                  const adjustment = result.result.adjustment || (extractedScore - scoreRef.current);
+                  
+                  setLastAdjustment(adjustment);
+                  setCurrentScore(extractedScore);
+                  scoreRef.current = extractedScore;
+                  
+                  setTimeout(() => setLastAdjustment(null), 2000);
+                }
+              }
+            } catch {}
+          }
+        }
       }
 
-      // Parse for tool calls in the response (they come as JSON in the stream)
-      // For now, extract score from [SCORE/100] pattern as fallback
-      const scoreMatch = assistantContent.match(/\[(\d+)\/100\]/);
-      if (scoreMatch) {
-        const newScore = parseInt(scoreMatch[1], 10);
-        const adjustment = newScore - scoreRef.current;
-        setLastAdjustment(adjustment);
-        setCurrentScore(newScore);
-        scoreRef.current = newScore;
-        
-        // Clean the score from display
+      // Process any remaining buffer
+      if (buffer.trim()) {
+        const colonIndex = buffer.indexOf(":");
+        if (colonIndex !== -1) {
+          const prefix = buffer.substring(0, colonIndex);
+          const data = buffer.substring(colonIndex + 1);
+          
+          if (prefix === "0") {
+            try {
+              const text = JSON.parse(data);
+              assistantContent += text;
+              setMessages(prev => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: "assistant", content: assistantContent };
+                return updated;
+              });
+            } catch {}
+          } else if (prefix === "a") {
+            try {
+              const toolResults = JSON.parse(data);
+              for (const result of toolResults) {
+                if (result.result && typeof result.result.newScore === "number") {
+                  extractedScore = result.result.newScore;
+                  const adjustment = result.result.adjustment || (extractedScore - scoreRef.current);
+                  setLastAdjustment(adjustment);
+                  setCurrentScore(extractedScore);
+                  scoreRef.current = extractedScore;
+                  setTimeout(() => setLastAdjustment(null), 2000);
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+
+      // Fallback: also check for [SCORE/100] pattern in text (for backwards compatibility)
+      if (extractedScore === null) {
+        const scoreMatch = assistantContent.match(/\[(\d+)\/100\]/);
+        if (scoreMatch) {
+          extractedScore = parseInt(scoreMatch[1], 10);
+          const adjustment = extractedScore - scoreRef.current;
+          setLastAdjustment(adjustment);
+          setCurrentScore(extractedScore);
+          scoreRef.current = extractedScore;
+          setTimeout(() => setLastAdjustment(null), 2000);
+        }
+      }
+      
+      // Clean any score text from display (in case model still outputs it)
+      const cleanedContent = assistantContent.replace(/\s*\[\d+\/100\]\s*$/, "").trim();
+      if (cleanedContent !== assistantContent) {
         setMessages(prev => {
           const updated = [...prev];
-          updated[updated.length - 1] = { 
-            role: "assistant", 
-            content: assistantContent.replace(/\s*\[\d+\/100\]\s*$/, "").trim()
-          };
+          updated[updated.length - 1] = { role: "assistant", content: cleanedContent };
           return updated;
         });
+        assistantContent = cleanedContent;
+      }
 
-        setTimeout(() => setLastAdjustment(null), 2000);
-
-        // Check for auto-end conditions
-        if (newScore >= 70 && !isComplete) {
-          await completeInterview([...currentMessages, { role: "user", content }, { role: "assistant", content: assistantContent }], newScore, "passed");
-        } else if (newScore < 10 && !isComplete) {
-          await completeInterview([...currentMessages, { role: "user", content }, { role: "assistant", content: assistantContent }], newScore, "failed");
+      // Check for auto-end conditions
+      if (extractedScore !== null) {
+        if (extractedScore >= 70 && !isComplete) {
+          await completeInterview([...currentMessages, { role: "user", content }, { role: "assistant", content: assistantContent }], extractedScore, "passed");
+        } else if (extractedScore < 10 && !isComplete) {
+          await completeInterview([...currentMessages, { role: "user", content }, { role: "assistant", content: assistantContent }], extractedScore, "failed");
         }
       }
 
@@ -204,10 +287,12 @@ export default function InterviewPage() {
       ? `Candidate passed with score ${finalScore}/100. Strong performance in the AI screening.`
       : `Interview ended with score ${finalScore}/100.`;
 
+    // Auto-move to review stage after phone screen completes
     await fetch(`/api/candidates/${candidateId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        stage: "review", // Auto-advance to recruiter review
         interviewStatus: "completed",
         interviewScore: finalScore,
         interviewTranscript: JSON.stringify(finalMessages),

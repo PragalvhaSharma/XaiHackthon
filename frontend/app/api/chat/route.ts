@@ -1,7 +1,8 @@
 import { createXai } from "@ai-sdk/xai";
-import { streamText, type CoreMessage } from "ai";
+import { streamText, type CoreMessage, tool } from "ai";
 import { buildSystemPrompt } from "@/lib/prompts";
 import { CandidateInput, ResearchData } from "@/lib/types";
+import { z } from "zod";
 
 export const maxDuration = 60;
 
@@ -32,7 +33,22 @@ export async function POST(req: Request) {
     system,
     messages,
     temperature: 0.7,
+    tools: {
+      updateScore: tool({
+        description: "Update the candidate's interview score. MUST be called after every response to reflect how well the candidate is doing. Score starts at 30, need 70+ to pass, below 10 is auto-fail.",
+        parameters: z.object({
+          newScore: z.number().min(0).max(100).describe("The updated score (0-100)"),
+          adjustment: z.number().describe("How much the score changed from the previous score (can be negative)"),
+          reason: z.string().describe("Brief reason for the score change, e.g. 'great technical depth' or 'vague answer'"),
+        }),
+        execute: async ({ newScore, adjustment, reason }) => {
+          // Tool execution - the score is passed back to the client
+          return { newScore, adjustment, reason };
+        },
+      }),
+    },
+    toolChoice: "required", // Force the model to always call the tool
   });
 
-  return result.toTextStreamResponse();
+  return result.toDataStreamResponse();
 }

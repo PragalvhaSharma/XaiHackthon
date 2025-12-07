@@ -501,6 +501,71 @@ def send_direct_message():
     except Exception as e:
         print(f"Error with DM: {e}")
         return jsonify({"error": str(e)}), 500
+
+# ==================== RL FEEDBACK ENDPOINT ====================
+from RLloop.rl_feedback import process_feedback, get_policy_stats, compute_calibration_metrics
+
+@app.route('/api/feedback', methods=['POST'])
+def submit_feedback():
+    """
+    Submit recruiter feedback for RL learning.
+    
+    Expected JSON body:
+    {
+        "candidate_id": "...",
+        "job_id": "...",
+        "ai_score": 75,
+        "recruiter_stars": 4
+    }
+    """
+    data = request.json
+    
+    candidate_id = data.get('candidate_id')
+    job_id = data.get('job_id')
+    ai_score = data.get('ai_score')
+    recruiter_stars = data.get('recruiter_stars')
+    
+    if not all([candidate_id, job_id, ai_score is not None, recruiter_stars]):
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    if not 1 <= recruiter_stars <= 5:
+        return jsonify({"error": "recruiter_stars must be 1-5"}), 400
+    
+    try:
+        result = process_feedback(
+            candidate_id=candidate_id,
+            job_id=job_id,
+            ai_score=int(ai_score),
+            recruiter_stars=int(recruiter_stars)
+        )
+        
+        # Also get updated policy stats
+        policy_stats = get_policy_stats(job_id)
+        
+        return jsonify({
+            "success": True,
+            "feedback": result,
+            "policy_stats": policy_stats
+        })
+    except Exception as e:
+        print(f"Error processing feedback: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/policy/<job_id>', methods=['GET'])
+def get_policy(job_id):
+    """Get RL policy stats and calibration metrics for a job."""
+    try:
+        stats = get_policy_stats(job_id)
+        metrics = compute_calibration_metrics(job_id)
+        
+        return jsonify({
+            "policy_stats": stats,
+            "calibration_metrics": metrics
+        })
+    except Exception as e:
+        print(f"Error getting policy: {e}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=True)

@@ -43,6 +43,10 @@ export const candidates = sqliteTable("candidates", {
   // DM data
   dmContent: text("dm_content"), // the personalized DM that was sent
   dmSentAt: integer("dm_sent_at", { mode: "timestamp" }),
+  // Recruiter review data
+  recruiterRating: integer("recruiter_rating"), // 1-5 stars (1=Strong No, 5=Strong Yes)
+  recruiterFeedback: text("recruiter_feedback"), // optional text feedback
+  recruiterReviewedAt: integer("recruiter_reviewed_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });

@@ -5,7 +5,7 @@ from xai_sdk import Client as XAIClient
 from xai_sdk.chat import user, system
 
 
-PRAGALVHA_X_USER_ID = "1693421111776563200"
+PRAGALVHA_X_USER_ID = ""
 
 class XDirectMessaging:
     def __init__(self, xai_client: XAIClient, x_client: Optional[XClient] = None):

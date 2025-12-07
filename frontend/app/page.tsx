@@ -96,6 +96,10 @@ interface Candidate {
   // DM fields
   dmContent: string | null;
   dmSentAt: string | null;
+  // Recruiter review fields
+  recruiterRating: number | null;
+  recruiterFeedback: string | null;
+  recruiterReviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -150,6 +154,8 @@ export default function RecruiterDashboard() {
   const activityIdRef = useRef(0);
   const [expandedResearchSteps, setExpandedResearchSteps] = useState<Map<string, Set<number>>>(new Map());
   const liveResearchProgressRef = useRef<Map<string, ResearchProgressStep[]>>(new Map());
+  const [generatingDM, setGeneratingDM] = useState<Set<string>>(new Set());
+  const [sendingDM, setSendingDM] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (activityRef.current) {
@@ -421,6 +427,237 @@ export default function RecruiterDashboard() {
       .filter(c => c.stage === "ranking" && !c.score && c.researchNotes)
       .forEach(candidate => startRanking(candidate));
   }, [candidates]);
+
+  // Generate personalized DM for a candidate
+  const generateDM = async (candidate: Candidate) => {
+    if (generatingDM.has(candidate.id) || !selectedJob) return;
+    
+    setGeneratingDM(prev => new Set(prev).add(candidate.id));
+
+    // Add activity
+    setLiveActivity(prev => [...prev.slice(-100), {
+      id: activityIdRef.current++,
+      candidateId: candidate.id,
+      candidateName: candidate.name,
+      message: "Generating personalized DM...",
+      timestamp: new Date(),
+      icon: "✉️",
+    }]);
+
+    try {
+      // Build candidate data for the API
+      const candidateData = {
+        user: {
+          id: candidate.id,
+          username: candidate.x,
+          name: candidate.name,
+          description: candidate.bio || "",
+          public_metrics: {
+            followers_count: candidate.followers || 0,
+          },
+        },
+        tweets: [],
+        evaluation: {
+          reason: candidate.evaluationReason || candidate.researchNotes || "Matches job requirements",
+        },
+        found_via_keyword: candidate.foundVia || "",
+      };
+
+      const res = await fetch("http://localhost:8080/send-dm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          candidate_data: candidateData,
+          job_description: selectedJob.description || selectedJob.title,
+          company_name: selectedJob.team || "Our Company",
+          recruiter_name: xAuthUser?.name || "Recruiter",
+          test_link: `${window.location.origin}/interview/${candidate.id}`,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to generate DM");
+      }
+
+      const result = await res.json();
+
+      if (result.success && result.message) {
+        // Save DM content to candidate
+        await fetch(`/api/candidates/${candidate.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dmContent: result.message,
+          }),
+        });
+
+        // Update local state
+        setCandidates(prev => prev.map(c => 
+          c.id === candidate.id 
+            ? { ...c, dmContent: result.message }
+            : c
+        ));
+
+        if (selectedCandidate?.id === candidate.id) {
+          setSelectedCandidate({ ...selectedCandidate, dmContent: result.message });
+        }
+
+        // Check if it was also sent
+        if (result.sent) {
+          await fetch(`/api/candidates/${candidate.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              dmSentAt: new Date().toISOString(),
+            }),
+          });
+
+          setCandidates(prev => prev.map(c => 
+            c.id === candidate.id 
+              ? { ...c, dmSentAt: new Date().toISOString() }
+              : c
+          ));
+
+          if (selectedCandidate?.id === candidate.id) {
+            setSelectedCandidate({ ...selectedCandidate, dmContent: result.message, dmSentAt: new Date().toISOString() });
+          }
+
+          setLiveActivity(prev => [...prev.slice(-100), {
+            id: activityIdRef.current++,
+            candidateId: candidate.id,
+            candidateName: candidate.name,
+            message: "DM generated and sent!",
+            timestamp: new Date(),
+            icon: "✅",
+          }]);
+        } else {
+          setLiveActivity(prev => [...prev.slice(-100), {
+            id: activityIdRef.current++,
+            candidateId: candidate.id,
+            candidateName: candidate.name,
+            message: "DM generated (ready to send)",
+            timestamp: new Date(),
+            icon: "📝",
+          }]);
+        }
+      } else {
+        throw new Error(result.error || "Failed to generate DM");
+      }
+    } catch (err) {
+      console.error("DM generation failed:", err);
+      setLiveActivity(prev => [...prev.slice(-100), {
+        id: activityIdRef.current++,
+        candidateId: candidate.id,
+        candidateName: candidate.name,
+        message: `DM generation failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+        timestamp: new Date(),
+        icon: "❌",
+      }]);
+    } finally {
+      setGeneratingDM(prev => {
+        const next = new Set(prev);
+        next.delete(candidate.id);
+        return next;
+      });
+    }
+  };
+
+  // Send DM to a candidate (if not already sent during generation)
+  const sendDM = async (candidate: Candidate) => {
+    if (sendingDM.has(candidate.id) || !candidate.dmContent) return;
+    
+    setSendingDM(prev => new Set(prev).add(candidate.id));
+
+    setLiveActivity(prev => [...prev.slice(-100), {
+      id: activityIdRef.current++,
+      candidateId: candidate.id,
+      candidateName: candidate.name,
+      message: "Sending DM...",
+      timestamp: new Date(),
+      icon: "📤",
+    }]);
+
+    try {
+      // Build candidate data for the API
+      const candidateData = {
+        user: {
+          id: candidate.id,
+          username: candidate.x,
+          name: candidate.name,
+          description: candidate.bio || "",
+        },
+      };
+
+      const res = await fetch("http://localhost:8080/send-dm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          candidate_data: candidateData,
+          job_description: selectedJob?.description || selectedJob?.title || "",
+          company_name: selectedJob?.team || "Our Company",
+          recruiter_name: xAuthUser?.name || "Recruiter",
+          test_link: `${window.location.origin}/interview/${candidate.id}`,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to send DM");
+      }
+
+      const result = await res.json();
+
+      if (result.sent) {
+        // Update DB
+        await fetch(`/api/candidates/${candidate.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dmSentAt: new Date().toISOString(),
+          }),
+        });
+
+        // Update local state
+        setCandidates(prev => prev.map(c => 
+          c.id === candidate.id 
+            ? { ...c, dmSentAt: new Date().toISOString() }
+            : c
+        ));
+
+        if (selectedCandidate?.id === candidate.id) {
+          setSelectedCandidate({ ...selectedCandidate, dmSentAt: new Date().toISOString() });
+        }
+
+        setLiveActivity(prev => [...prev.slice(-100), {
+          id: activityIdRef.current++,
+          candidateId: candidate.id,
+          candidateName: candidate.name,
+          message: "DM sent successfully!",
+          timestamp: new Date(),
+          icon: "✅",
+        }]);
+      } else {
+        throw new Error(result.send_error || "DM not sent");
+      }
+    } catch (err) {
+      console.error("DM send failed:", err);
+      setLiveActivity(prev => [...prev.slice(-100), {
+        id: activityIdRef.current++,
+        candidateId: candidate.id,
+        candidateName: candidate.name,
+        message: `DM send failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+        timestamp: new Date(),
+        icon: "❌",
+      }]);
+    } finally {
+      setSendingDM(prev => {
+        const next = new Set(prev);
+        next.delete(candidate.id);
+        return next;
+      });
+    }
+  };
 
   const resetJobForm = () => {
     setJobForm({
@@ -916,6 +1153,18 @@ export default function RecruiterDashboard() {
               <div className="auth-user">
                 <span className="auth-user-name">@{xAuthUser.username}</span>
                 <span className="auth-badge connected">𝕏 Connected</span>
+                <button 
+                  className="logout-btn"
+                  onClick={async () => {
+                    await fetch("http://localhost:8080/auth/logout", { 
+                      method: "POST", 
+                      credentials: "include" 
+                    });
+                    setXAuthUser(null);
+                  }}
+                >
+                  Logout
+                </button>
               </div>
             ) : (
               <a href="http://localhost:8080/authorize" className="auth-btn">
@@ -928,13 +1177,11 @@ export default function RecruiterDashboard() {
         <nav className="pipeline-nav">
           {PIPELINE_STAGES.map((stage, idx) => {
             const count = getCumulativeCount(stage.key);
-            const currentCount = getCandidatesForStage(stage.key).length;
             const isActive = activeStage === stage.key;
-                const isWorking = stage.key === "research" || stage.key === "discovery" || stage.key === "ranking";
             return (
               <button
                 key={stage.key}
-                className={`pipeline-stage-btn ${isActive ? 'active' : ''} ${!isWorking ? 'mocked' : ''}`}
+                className={`pipeline-stage-btn ${isActive ? 'active' : ''}`}
                 onClick={() => setActiveStage(stage.key)}
               >
                 <div className="stage-header">
@@ -942,7 +1189,6 @@ export default function RecruiterDashboard() {
                   <span className="stage-label">{stage.label}</span>
                   {count > 0 && <span className="stage-count">{count}</span>}
                 </div>
-                {!isWorking && <span className="mock-badge">mock</span>}
                 {idx < PIPELINE_STAGES.length - 1 && <div className="stage-arrow">→</div>}
               </button>
             );
@@ -1489,12 +1735,97 @@ export default function RecruiterDashboard() {
                         </div>
                       )}
 
-                      {/* Outreach Status */}
+                      {/* Outreach Section */}
                       <div className="outreach-section">
-                        <div className="mock-icon">✉️</div>
-                        <h4>Personalized Outreach</h4>
-                        <p className="mock-description">AI-generated DM based on research findings</p>
-                        <div className="mock-badge-large">Coming Soon</div>
+                        {/* Already sent */}
+                        {selectedCandidate.dmSentAt ? (
+                          <div className="dm-sent-section">
+                            <div className="dm-sent-header">
+                              <span className="dm-sent-icon">✅</span>
+                              <div>
+                                <h4>DM Sent</h4>
+                                <p className="dm-sent-time">
+                                  Sent {new Date(selectedCandidate.dmSentAt).toLocaleDateString()} at {new Date(selectedCandidate.dmSentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                              </div>
+                            </div>
+                            {selectedCandidate.dmContent && (
+                              <div className="dm-preview sent">
+                                <label>Message Sent</label>
+                                <div className="dm-content">{selectedCandidate.dmContent}</div>
+                              </div>
+                            )}
+                          </div>
+                        ) : selectedCandidate.dmContent ? (
+                          /* DM generated but not sent */
+                          <div className="dm-ready-section">
+                            <div className="dm-ready-header">
+                              <span className="dm-ready-icon">📝</span>
+                              <div>
+                                <h4>DM Ready to Send</h4>
+                                <p>Review and send the personalized message</p>
+                              </div>
+                            </div>
+                            <div className="dm-preview">
+                              <label>Generated Message</label>
+                              <div className="dm-content">{selectedCandidate.dmContent}</div>
+                            </div>
+                            <div className="dm-actions">
+                              <button 
+                                className="btn-ghost"
+                                onClick={() => generateDM(selectedCandidate)}
+                                disabled={generatingDM.has(selectedCandidate.id)}
+                              >
+                                {generatingDM.has(selectedCandidate.id) ? "Regenerating..." : "🔄 Regenerate"}
+                              </button>
+                              <button 
+                                className="btn-primary dm-send-btn"
+                                onClick={() => sendDM(selectedCandidate)}
+                                disabled={sendingDM.has(selectedCandidate.id) || !xAuthUser}
+                              >
+                                {sendingDM.has(selectedCandidate.id) ? (
+                                  <>
+                                    <span className="btn-spinner" />
+                                    Sending...
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>📤</span>
+                                    Send DM on X
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            {!xAuthUser && (
+                              <p className="dm-auth-hint">Login with X to send DMs</p>
+                            )}
+                          </div>
+                        ) : generatingDM.has(selectedCandidate.id) ? (
+                          /* Currently generating */
+                          <div className="dm-generating-section">
+                            <div className="dm-generating-spinner" />
+                            <h4>Generating Personalized DM</h4>
+                            <p>AI is crafting a message based on research...</p>
+                          </div>
+                        ) : (
+                          /* No DM yet - show generate button */
+                          <div className="dm-empty-section">
+                            <div className="dm-empty-icon">✉️</div>
+                            <h4>Personalized Outreach</h4>
+                            <p>Generate an AI-powered DM based on candidate research</p>
+                            <button 
+                              className="btn-primary generate-dm-btn"
+                              onClick={() => generateDM(selectedCandidate)}
+                              disabled={!xAuthUser}
+                            >
+                              <span>🤖</span>
+                              Generate Personalized DM
+                            </button>
+                            {!xAuthUser && (
+                              <p className="dm-auth-hint">Login with X in the header to use this feature</p>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       {/* Actions - only show if candidate is at this stage */}
@@ -1646,22 +1977,145 @@ export default function RecruiterDashboard() {
                   {/* ==================== REVIEW STAGE ==================== */}
                   {activeStage === "review" && (
                     <div className="stage-content review-stage">
-                      {/* Score Badge */}
-                      {selectedCandidate.score && (
-                        <div className="score-badge-row">
+                      {/* Score Badges */}
+                      <div className="score-badge-row">
+                        {selectedCandidate.score && (
                           <div className={`score-badge ${selectedCandidate.score >= 75 ? 'excellent' : selectedCandidate.score >= 60 ? 'good' : 'moderate'}`}>
-                            Score: {selectedCandidate.score}/100
+                            Research: {selectedCandidate.score}/100
+                          </div>
+                        )}
+                        {selectedCandidate.interviewScore && (
+                          <div className={`score-badge ${selectedCandidate.interviewScore >= 70 ? 'excellent' : selectedCandidate.interviewScore >= 50 ? 'good' : 'moderate'}`}>
+                            Interview: {selectedCandidate.interviewScore}/100
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Review Form or Already Reviewed */}
+                      {selectedCandidate.recruiterRating ? (
+                        <div className="review-completed">
+                          <div className="review-completed-header">
+                            <span className="review-icon">✓</span>
+                            <h4>Review Submitted</h4>
+                          </div>
+                          <div className="review-result">
+                            <div className="rating-display">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <span 
+                                  key={star} 
+                                  className={`star ${star <= selectedCandidate.recruiterRating! ? 'filled' : ''}`}
+                                >
+                                  ★
+                                </span>
+                              ))}
+                              <span className="rating-label">
+                                {selectedCandidate.recruiterRating === 5 ? "Strong Yes" :
+                                 selectedCandidate.recruiterRating === 4 ? "Yes" :
+                                 selectedCandidate.recruiterRating === 3 ? "Maybe" :
+                                 selectedCandidate.recruiterRating === 2 ? "No" : "Strong No"}
+                              </span>
+                            </div>
+                            {selectedCandidate.recruiterFeedback && (
+                              <div className="feedback-display">
+                                <label>Feedback</label>
+                                <p>{selectedCandidate.recruiterFeedback}</p>
+                              </div>
+                            )}
                           </div>
                         </div>
-                      )}
+                      ) : (
+                        <div className="review-form">
+                          <h4>Rate this candidate</h4>
+                          <p className="review-subtitle">Your feedback helps improve AI scoring accuracy</p>
+                          
+                          <div className="rating-selector">
+                            {[
+                              { value: 1, label: "Strong No", emoji: "👎" },
+                              { value: 2, label: "No", emoji: "😕" },
+                              { value: 3, label: "Maybe", emoji: "🤔" },
+                              { value: 4, label: "Yes", emoji: "👍" },
+                              { value: 5, label: "Strong Yes", emoji: "🔥" },
+                            ].map((option) => (
+                              <button
+                                key={option.value}
+                                className={`rating-option ${(selectedCandidate as Candidate & { _pendingRating?: number })._pendingRating === option.value ? 'selected' : ''}`}
+                                onClick={() => {
+                                  setCandidates(prev => prev.map(c => 
+                                    c.id === selectedCandidate.id 
+                                      ? { ...c, _pendingRating: option.value } as Candidate & { _pendingRating: number }
+                                      : c
+                                  ));
+                                  setSelectedCandidate({ ...selectedCandidate, _pendingRating: option.value } as Candidate & { _pendingRating: number });
+                                }}
+                              >
+                                <span className="rating-emoji">{option.emoji}</span>
+                                <span className="rating-value">{option.value}</span>
+                                <span className="rating-text">{option.label}</span>
+                              </button>
+                            ))}
+                          </div>
 
-                      {/* Review Status */}
-                      <div className="review-section">
-                        <div className="mock-icon">✓</div>
-                        <h4>Recruiter Review</h4>
-                        <p className="mock-description">Review candidates and provide feedback to improve ranking</p>
-                        <div className="mock-badge-large">Coming Soon</div>
-                      </div>
+                          <div className="feedback-input">
+                            <label>Feedback (optional)</label>
+                            <textarea
+                              placeholder="Why did you rate them this way? This helps improve the AI..."
+                              value={(selectedCandidate as Candidate & { _pendingFeedback?: string })._pendingFeedback || ""}
+                              onChange={(e) => {
+                                setCandidates(prev => prev.map(c => 
+                                  c.id === selectedCandidate.id 
+                                    ? { ...c, _pendingFeedback: e.target.value } as Candidate & { _pendingFeedback: string }
+                                    : c
+                                ));
+                                setSelectedCandidate({ ...selectedCandidate, _pendingFeedback: e.target.value } as Candidate & { _pendingFeedback: string });
+                              }}
+                            />
+                          </div>
+
+                          <button
+                            className="submit-review-btn"
+                            disabled={!(selectedCandidate as Candidate & { _pendingRating?: number })._pendingRating}
+                            onClick={async () => {
+                              const pendingRating = (selectedCandidate as Candidate & { _pendingRating?: number })._pendingRating;
+                              const pendingFeedback = (selectedCandidate as Candidate & { _pendingFeedback?: string })._pendingFeedback;
+                              
+                              if (!pendingRating) return;
+
+                              const res = await fetch("/api/review", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  candidateId: selectedCandidate.id,
+                                  rating: pendingRating,
+                                  feedback: pendingFeedback || null,
+                                }),
+                              });
+
+                              if (res.ok) {
+                                const data = await res.json();
+                                // Update local state
+                                setCandidates(prev => prev.map(c => 
+                                  c.id === selectedCandidate.id 
+                                    ? { 
+                                        ...c, 
+                                        recruiterRating: pendingRating,
+                                        recruiterFeedback: pendingFeedback || null,
+                                        recruiterReviewedAt: new Date().toISOString(),
+                                      }
+                                    : c
+                                ));
+                                setSelectedCandidate({
+                                  ...selectedCandidate,
+                                  recruiterRating: pendingRating,
+                                  recruiterFeedback: pendingFeedback || null,
+                                  recruiterReviewedAt: new Date().toISOString(),
+                                });
+                              }
+                            }}
+                          >
+                            Submit Review
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

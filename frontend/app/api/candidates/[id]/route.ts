@@ -33,7 +33,9 @@ export async function PATCH(
       interviewStatus, interviewScore, interviewTranscript, interviewFeedback,
       interviewStartedAt, interviewCompletedAt,
       // DM fields
-      dmContent, dmSentAt
+      dmContent, dmSentAt,
+      // Recruiter review fields
+      recruiterRating, recruiterFeedback, recruiterReviewedAt
     } = body;
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
@@ -56,6 +58,10 @@ export async function PATCH(
     // DM fields
     if (dmContent !== undefined) updates.dmContent = dmContent;
     if (dmSentAt !== undefined) updates.dmSentAt = new Date(dmSentAt);
+    // Recruiter review fields
+    if (recruiterRating !== undefined) updates.recruiterRating = recruiterRating;
+    if (recruiterFeedback !== undefined) updates.recruiterFeedback = recruiterFeedback;
+    if (recruiterReviewedAt !== undefined) updates.recruiterReviewedAt = new Date(recruiterReviewedAt);
 
     db.update(candidates).set(updates).where(eq(candidates.id, params.id)).run();
     
