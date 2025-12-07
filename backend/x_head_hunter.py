@@ -333,4 +333,8 @@ class XHeadHunter:
                     print(f"Error evaluating @{username}: {e}")
 
         print(f"Hunt complete. Found {len(viable_candidates)} viable candidates out of {len(users_map)} total.")
-        return viable_candidates
+        return {
+            "viable_candidates": viable_candidates,
+            "total_searched": len(users_map),
+            "total_viable": len(viable_candidates)
+        }

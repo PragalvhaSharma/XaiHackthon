@@ -26,13 +26,14 @@ export async function PATCH(
 ) {
   try {
     const body = await req.json();
-    const { stage, score, researchNotes, rawResearch, github, linkedin } = body;
+    const { stage, score, researchNotes, rawResearch, researchStatus, github, linkedin } = body;
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (stage !== undefined) updates.stage = stage;
     if (score !== undefined) updates.score = score;
     if (researchNotes !== undefined) updates.researchNotes = researchNotes;
     if (rawResearch !== undefined) updates.rawResearch = JSON.stringify(rawResearch);
+    if (researchStatus !== undefined) updates.researchStatus = researchStatus;
     if (github !== undefined) updates.github = github;
     if (linkedin !== undefined) updates.linkedin = linkedin;
 

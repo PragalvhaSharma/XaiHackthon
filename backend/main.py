@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, make_response
+from flask_cors import CORS
 import json
 import os
 from dotenv import load_dotenv
@@ -13,6 +14,9 @@ load_dotenv()
 
 app = Flask(__name__, template_folder='../templates')
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# Enable CORS for frontend
+CORS(app, supports_credentials=True, origins=["http://localhost:3000"])
 
 # Session configuration for OAuth callbacks (cross-site redirects)
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -66,6 +70,37 @@ def get_x_authenticated_client():
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/auth/status')
+def auth_status():
+    """Check if user is authenticated with X."""
+    client = get_x_authenticated_client()
+    if client:
+        try:
+            # Try to get the authenticated user's info
+            me = client.users.get_me(user_fields=["name", "username", "profile_image_url"])
+            if me and me.data:
+                return jsonify({
+                    "authenticated": True,
+                    "user": {
+                        "name": me.data.get("name"),
+                        "username": me.data.get("username"),
+                        "profile_image_url": me.data.get("profile_image_url")
+                    }
+                })
+        except Exception as e:
+            print(f"Error getting user info: {e}")
+    
+    return jsonify({"authenticated": False})
+
+@app.route('/auth/logout', methods=['POST'])
+def logout():
+    """Clear authentication."""
+    global token_store
+    token_store = None
+    response = make_response(jsonify({"success": True}))
+    response.delete_cookie('x_token')
+    return response
 
 # OAuth2 PKCE for user context authorization
 @app.route('/authorize')
@@ -137,10 +172,12 @@ def callback():
         print("Callback - Token exchange successful!")
         print(f"Callback - Access token stored: {tokens['access_token'][:20]}...")
         
-        # Create response and store entire token dict in cookie for persistence
-        response = make_response(redirect(url_for('index')))
+        # Create response and redirect to frontend
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+        response = make_response(redirect(frontend_url))
         # Store token as JSON, httponly for security, max_age = 7 days
-        response.set_cookie('x_token', json.dumps(tokens), httponly=True, max_age=7*24*60*60)
+        # Set SameSite=None for cross-site cookie (backend to frontend)
+        response.set_cookie('x_token', json.dumps(tokens), httponly=True, max_age=7*24*60*60, samesite='Lax')
         
         return response
     except Exception as e:
@@ -220,13 +257,14 @@ def hunt_candidates():
         )
         
         # Hunt for candidates
-        candidates = head_hunter.hunt()
+        result = head_hunter.hunt()
         
         return jsonify({
             "success": True,
             "job_description": job_desc,
-            "candidates_count": len(candidates),
-            "candidates": candidates
+            "total_searched": result["total_searched"],
+            "candidates_count": result["total_viable"],
+            "candidates": result["viable_candidates"]
         })
     except Exception as e:
         print(f"Error during hunt: {e}")
