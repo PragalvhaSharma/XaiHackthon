@@ -19,6 +19,8 @@ export const candidates = sqliteTable("candidates", {
   linkedin: text("linkedin"),
   stage: text("stage").notNull().default("discovery"),
   score: real("score"),
+  researchStatus: text("research_status").default("pending"), // pending, running, done, error
+  researchProgress: text("research_progress"), // JSON array of progress steps
   researchNotes: text("research_notes"),
   rawResearch: text("raw_research"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
@@ -30,3 +32,10 @@ export type NewJob = typeof jobs.$inferInsert;
 export type Candidate = typeof candidates.$inferSelect;
 export type NewCandidate = typeof candidates.$inferInsert;
 
+export interface ResearchProgressStep {
+  id: number;
+  type: "x" | "github" | "linkedin" | "synthesis" | "start";
+  status: "searching" | "done" | "error";
+  message: string;
+  timestamp: number;
+}
