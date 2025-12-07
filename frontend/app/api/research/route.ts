@@ -43,6 +43,30 @@ async function setCachedResearch(candidate: CandidateInput, result: ResearchResu
   }
 }
 
+async function fetchAvatar(handle: string): Promise<{ dataUrl: string | null; sourceUrl: string | null }> {
+  const sources = [
+    `https://unavatar.io/twitter/${handle}?fallback=false`,
+    `https://x.com/${handle}/profile_image?size=original`,
+  ];
+
+  for (const url of sources) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const contentType = res.headers.get("content-type") || "image/jpeg";
+      const buffer = Buffer.from(await res.arrayBuffer());
+      return {
+        dataUrl: `data:${contentType};base64,${buffer.toString("base64")}`,
+        sourceUrl: url,
+      };
+    } catch (err) {
+      console.error("[Research] Avatar fetch failed from", url, err);
+    }
+  }
+
+  return { dataUrl: null, sourceUrl: null };
+}
+
 const schema = z.object({
   name: z.string().min(2),
   email: z.string().email().optional().or(z.literal("")), // Allow empty string
@@ -82,6 +106,7 @@ export async function POST(req: Request) {
       
       // Send quick progress updates for cached data
       await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "start", message: "Loading cached research..." })}\n\n`));
+      await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "avatar", status: "done", message: "✓ Loaded avatar from cache" })}\n\n`));
       await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "x", status: "done", message: "✓ Loaded from cache" })}\n\n`));
       await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "github", status: "done", message: "✓ Loaded from cache" })}\n\n`));
       await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "linkedin", status: "done", message: "✓ Loaded from cache" })}\n\n`));
@@ -119,8 +144,19 @@ export async function POST(req: Request) {
         const researchBlocks: string[] = [];
         const discoveredLinks: string[] = [];
         const rawResearch: { x?: string; github?: string; linkedin?: string; additionalLinks?: string } = {};
+        let avatarResult: { dataUrl: string | null; sourceUrl: string | null } = { dataUrl: null, sourceUrl: null };
 
         await sendStep({ type: "start", message: `Starting deep research on @${candidate.x}...` });
+
+        if (candidate.x) {
+          await sendStep({ type: "avatar", status: "searching", message: "Fetching X profile photo..." });
+          avatarResult = await fetchAvatar(candidate.x.replace("@", ""));
+          if (avatarResult.dataUrl) {
+            await sendStep({ type: "avatar", status: "done", message: "Saved X profile photo" });
+          } else {
+            await sendStep({ type: "avatar", status: "error", message: "Could not fetch X profile photo" });
+          }
+        }
 
         // X handle is provided by discovery agent
         // Search for GitHub and LinkedIn using X profile
@@ -552,6 +588,7 @@ Keep it concise, 3-4 paragraphs. Facts only.`,
           candidate,
           researchNotes: synthesisNotes || "No research data gathered.",
           rawResearch,
+          avatar: avatarResult,
           sources: {
             linkedin: candidate.linkedin,
             x: candidate.x,

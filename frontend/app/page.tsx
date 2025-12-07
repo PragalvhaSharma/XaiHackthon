@@ -56,8 +56,17 @@ interface Candidate {
   name: string;
   email: string | null;
   x: string;
+  xAvatar: string | null;
+  xAvatarUrl: string | null;
   github: string | null;
   linkedin: string | null;
+  location: string | null;
+  // Discovery/Hunt fields (persisted in DB)
+  bio: string | null;
+  followers: number | null;
+  foundVia: string | null;
+  evaluationReason: string | null;
+  // Pipeline fields
   stage: string;
   score: number | null;
   researchStatus: string | null;
@@ -66,15 +75,6 @@ interface Candidate {
   rawResearch: string | null;
   createdAt: string;
   updatedAt: string;
-  // Discovery fields (from hunt)
-  evaluation?: {
-    is_viable: boolean;
-    account_type: string;
-    reason: string;
-  };
-  foundVia?: string;
-  bio?: string;
-  followers?: number;
 }
 
 interface LiveActivity {
@@ -98,6 +98,18 @@ const PIPELINE_STAGES: { key: PipelineStage; label: string; icon: string; descri
 export default function RecruiterDashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [jobInfoModal, setJobInfoModal] = useState<Job | null>(null);
+  const [showJobForm, setShowJobForm] = useState(false);
+  const [jobForm, setJobForm] = useState({
+    title: "",
+    team: "",
+    location: "",
+    type: "Full-time",
+    description: "",
+  });
+  const [isSavingJob, setIsSavingJob] = useState(false);
+  const [jobsError, setJobsError] = useState<string | null>(null);
+  const [jobFormError, setJobFormError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [activeStage, setActiveStage] = useState<PipelineStage>("discovery");
@@ -134,12 +146,19 @@ export default function RecruiterDashboard() {
   // Fetch jobs
   useEffect(() => {
     fetch("/api/jobs")
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to load jobs");
+        return res.json();
+      })
       .then(data => {
         setJobs(data);
         if (data.length > 0) setSelectedJob(data[0]);
+        setJobsError(null);
       })
-      .catch(console.error);
+      .catch(err => {
+        console.error(err);
+        setJobsError("Failed to load jobs");
+      });
   }, []);
 
   // Fetch candidates once when job changes
@@ -223,6 +242,7 @@ export default function RecruiterDashboard() {
               
               // Add to live activity
               let icon = "◆";
+              if (data.type === "avatar") icon = "🖼️";
               if (data.type === "x") icon = "𝕏";
               if (data.type === "github") icon = "◉";
               if (data.type === "linkedin") icon = "in";
@@ -250,6 +270,8 @@ export default function RecruiterDashboard() {
                   rawResearch: JSON.stringify(data.result.rawResearch),
                   github: data.result.candidate?.github || candidate.github,
                   linkedin: data.result.candidate?.linkedin || candidate.linkedin,
+                  xAvatar: data.result.avatar?.dataUrl ?? candidate.xAvatar ?? null,
+                  xAvatarUrl: data.result.avatar?.sourceUrl ?? candidate.xAvatarUrl ?? null,
                   stage: "ranking",
                 }),
               });
@@ -279,6 +301,58 @@ export default function RecruiterDashboard() {
       .filter(c => c.stage === "research" && c.researchStatus === "pending" && !c.researchNotes)
       .forEach(candidate => startResearch(candidate));
   }, [candidates]);
+
+  const resetJobForm = () => {
+    setJobForm({
+      title: "",
+      team: "",
+      location: "",
+      type: "Full-time",
+      description: "",
+    });
+    setJobFormError(null);
+  };
+
+  const createJob = async () => {
+    if (!jobForm.title.trim() || !jobForm.team.trim() || !jobForm.location.trim() || !jobForm.type.trim() || !jobForm.description.trim()) {
+      setJobFormError("Please fill in all job fields");
+      return;
+    }
+
+    setIsSavingJob(true);
+    setJobFormError(null);
+
+    try {
+      const res = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: jobForm.title.trim(),
+          team: jobForm.team.trim(),
+          location: jobForm.location.trim(),
+          type: jobForm.type.trim(),
+          description: jobForm.description.trim(),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error || "Failed to create job");
+      }
+
+      const newJob = await res.json();
+      setJobs(prev => [newJob, ...prev]);
+      setSelectedJob(newJob);
+      setJobsError(null);
+      setShowJobForm(false);
+      resetJobForm();
+    } catch (error) {
+      console.error("Create job failed:", error);
+      setJobFormError(error instanceof Error ? error.message : "Failed to create job");
+    } finally {
+      setIsSavingJob(false);
+    }
+  };
 
   const addCandidate = async () => {
     if (!newCandidateX.trim() || !newCandidateName.trim() || !selectedJob) return;
@@ -453,12 +527,150 @@ export default function RecruiterDashboard() {
   
   const isCurrentlyResearching = selectedCandidate ? researchingRef.current.has(selectedCandidate.id) : false;
 
+  const jobModals = (
+    <>
+      {jobInfoModal && (
+        <div className="modal-backdrop" onClick={() => setJobInfoModal(null)}>
+          <div className="modal-card job-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">{jobInfoModal.title}</div>
+                <div className="modal-subtitle">{jobInfoModal.team} · {jobInfoModal.location} · {jobInfoModal.type}</div>
+              </div>
+              <button className="modal-close" onClick={() => setJobInfoModal(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              {jobInfoModal.description ? (
+                <p className="job-description">{jobInfoModal.description}</p>
+              ) : (
+                <p className="text-muted">No description available.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showJobForm && (
+        <div className="modal-backdrop" onClick={() => { if (!isSavingJob) { setShowJobForm(false); resetJobForm(); } }}>
+          <div className="modal-card job-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">New Job</div>
+                <div className="modal-subtitle">Add a role to start hunting</div>
+              </div>
+              <button 
+                className="modal-close" 
+                onClick={() => { if (!isSavingJob) { setShowJobForm(false); resetJobForm(); } }}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="modal-input-grid">
+                <label className="modal-field">
+                  <span>Title</span>
+                  <input 
+                    className="modal-input"
+                    type="text"
+                    placeholder="e.g., Software Engineer, AI Infrastructure"
+                    value={jobForm.title}
+                    onChange={e => setJobForm(prev => ({ ...prev, title: e.target.value }))}
+                  />
+                </label>
+                <label className="modal-field">
+                  <span>Team</span>
+                  <input 
+                    className="modal-input"
+                    type="text"
+                    placeholder="Engineering, Product, Research"
+                    value={jobForm.team}
+                    onChange={e => setJobForm(prev => ({ ...prev, team: e.target.value }))}
+                  />
+                </label>
+                <label className="modal-field">
+                  <span>Location</span>
+                  <input 
+                    className="modal-input"
+                    type="text"
+                    placeholder="San Francisco, Remote"
+                    value={jobForm.location}
+                    onChange={e => setJobForm(prev => ({ ...prev, location: e.target.value }))}
+                  />
+                </label>
+                <label className="modal-field">
+                  <span>Type</span>
+                  <select
+                    className="modal-input"
+                    value={jobForm.type}
+                    onChange={e => setJobForm(prev => ({ ...prev, type: e.target.value }))}
+                  >
+                    <option>Full-time</option>
+                    <option>Contract</option>
+                    <option>Part-time</option>
+                    <option>Internship</option>
+                  </select>
+                </label>
+              </div>
+              <label className="modal-field">
+                <span>Description</span>
+                <textarea
+                  className="modal-textarea"
+                  rows={5}
+                  placeholder="What should the hunt focus on?"
+                  value={jobForm.description}
+                  onChange={e => setJobForm(prev => ({ ...prev, description: e.target.value }))}
+                />
+              </label>
+              {jobFormError && <div className="modal-error">{jobFormError}</div>}
+            </div>
+            <div className="modal-footer">
+              <button 
+                className="btn-ghost" 
+                onClick={() => { if (!isSavingJob) { setShowJobForm(false); resetJobForm(); } }}
+                disabled={isSavingJob}
+              >
+                Cancel
+              </button>
+              <button 
+                className="btn-primary" 
+                onClick={createJob} 
+                disabled={isSavingJob}
+              >
+                {isSavingJob ? "Creating..." : "Create Job"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   if (!selectedJob) {
-    return <div className="dashboard"><div className="loading">Loading...</div></div>;
+    return (
+      <>
+        {jobModals}
+        <div className="dashboard">
+          <div className="loading">
+            <div className="loading-stack">
+              <div>{jobsError || "Add a job to get started"}</div>
+              <button 
+                className="btn-primary"
+                onClick={() => { resetJobForm(); setShowJobForm(true); }}
+                type="button"
+              >
+                New Job
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
   }
 
   return (
-    <div className="dashboard">
+    <>
+      {jobModals}
+      <div className="dashboard">
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="logo">xAI <span>Recruiter</span></div>
@@ -469,17 +681,48 @@ export default function RecruiterDashboard() {
         </div>
         
         <div className="sidebar-section">
-          <div className="sidebar-label">Jobs</div>
+          <div className="sidebar-label-row">
+            <div className="sidebar-label">Jobs</div>
+            <button 
+              className="job-new-btn" 
+              onClick={() => { resetJobForm(); setShowJobForm(true); }}
+              type="button"
+            >
+              ＋ New
+            </button>
+          </div>
+          {jobsError && <div className="sidebar-error">{jobsError}</div>}
           <div className="job-list-sidebar">
-            {jobs.map(job => (
-              <button
-                key={job.id}
-                className={`job-btn ${selectedJob.id === job.id ? 'active' : ''}`}
-                onClick={() => setSelectedJob(job)}
-              >
-                <span className="job-btn-title">{job.title}</span>
-                <span className="job-btn-meta">{job.team}</span>
-              </button>
+            {jobs.length === 0 && !jobsError ? (
+              <div className="job-empty-hint">
+                <p>No jobs yet.</p>
+                <button 
+                  className="btn-primary" 
+                  type="button" 
+                  onClick={() => { resetJobForm(); setShowJobForm(true); }}
+                >
+                  Create one
+                </button>
+              </div>
+            ) : jobs.map(job => (
+              <div key={job.id} className="job-list-item">
+                <button
+                  className={`job-btn ${selectedJob.id === job.id ? 'active' : ''}`}
+                  onClick={() => setSelectedJob(job)}
+                >
+                  <span className="job-btn-title">{job.title}</span>
+                  <span className="job-btn-meta">{job.team}</span>
+                </button>
+                <button 
+                  className="job-info-btn" 
+                  onClick={e => { e.stopPropagation(); setJobInfoModal(job); }}
+                  aria-label="View job details"
+                  title="View job details"
+                  type="button"
+                >
+                  i
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -632,13 +875,20 @@ export default function RecruiterDashboard() {
               ) : (
                 stageCandidates.map(candidate => {
                   const isResearching = researchingRef.current.has(candidate.id);
+                  const avatarSrc = candidate.xAvatar || candidate.xAvatarUrl;
                   return (
                     <div 
                       key={candidate.id} 
                       className={`candidate-card ${selectedCandidate?.id === candidate.id ? 'selected' : ''} ${isResearching ? 'researching' : ''}`}
                       onClick={() => setSelectedCandidate(candidate)}
                     >
-                      <div className="candidate-avatar">{candidate.name.split(' ').map(n => n[0]).join('')}</div>
+                      <div className="candidate-avatar">
+                        {avatarSrc ? (
+                          <img src={avatarSrc} alt={`${candidate.name} avatar`} />
+                        ) : (
+                          candidate.name.split(' ').map(n => n[0]).join('')
+                        )}
+                      </div>
                       <div className="candidate-info">
                         <div className="candidate-name">{candidate.name}</div>
                         <div className="candidate-handle">@{candidate.x}</div>
@@ -661,7 +911,13 @@ export default function RecruiterDashboard() {
             {selectedCandidate ? (
               <>
                 <div className="detail-header">
-                  <div className="detail-avatar">{selectedCandidate.name.split(' ').map(n => n[0]).join('')}</div>
+                  <div className="detail-avatar">
+                    {selectedCandidate.xAvatar || selectedCandidate.xAvatarUrl ? (
+                      <img src={selectedCandidate.xAvatar || selectedCandidate.xAvatarUrl || undefined} alt={`${selectedCandidate.name} avatar`} />
+                    ) : (
+                      selectedCandidate.name.split(' ').map(n => n[0]).join('')
+                    )}
+                  </div>
                   <div className="detail-info">
                     <h3>{selectedCandidate.name}</h3>
                     <a href={`https://x.com/${selectedCandidate.x}`} target="_blank" rel="noopener noreferrer" className="detail-handle">@{selectedCandidate.x}</a>
@@ -701,6 +957,7 @@ export default function RecruiterDashboard() {
                           const isError = step.status === "error";
                           
                           let icon = "◆";
+                          if (step.type === "avatar") icon = "🖼️";
                           if (step.type === "x") icon = "𝕏";
                           if (step.type === "github") icon = "◉";
                           if (step.type === "linkedin") icon = "in";
@@ -758,15 +1015,17 @@ export default function RecruiterDashboard() {
                       )}
                       
                       {/* Evaluation from AI */}
-                      {selectedCandidate.evaluation && (
+                      {selectedCandidate.evaluationReason && (
                         <div className="discovery-section">
                           <h4>AI Assessment</h4>
                           <div className="evaluation-card">
-                            <div className="evaluation-reason">{selectedCandidate.evaluation.reason}</div>
+                            <div className="evaluation-reason">{selectedCandidate.evaluationReason}</div>
                             <div className="evaluation-meta">
-                              <span className="evaluation-tag">{selectedCandidate.evaluation.account_type}</span>
                               {selectedCandidate.foundVia && (
-                                <span className="evaluation-tag secondary">Found via "{selectedCandidate.foundVia}"</span>
+                                <span className="evaluation-tag">Found via "{selectedCandidate.foundVia}"</span>
+                              )}
+                              {selectedCandidate.location && (
+                                <span className="evaluation-tag secondary">📍 {selectedCandidate.location}</span>
                               )}
                             </div>
                           </div>
@@ -865,5 +1124,6 @@ export default function RecruiterDashboard() {
         </div>
       </main>
     </div>
+    </>
   );
 }

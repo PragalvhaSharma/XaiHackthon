@@ -89,7 +89,7 @@ class XHeadHunter:
                 max_results=100,
                 tweet_fields=["author_id"],
                 expansions=["author_id"],
-                user_fields=["id", "username", "name", "description", "verified", "public_metrics"]
+                user_fields=["id", "username", "name", "description", "verified", "public_metrics", "profile_image_url"]
             ))
 
             print(f"tweets_response kw: {keyword}: {tweets_response}")
@@ -123,7 +123,10 @@ class XHeadHunter:
                     else:
                         # Fallback: fetch profile individually
                         try:
-                            profile = self.x_client.users.get_by_id(id=author_id)
+                            profile = self.x_client.users.get_by_id(
+                                id=author_id,
+                                user_fields=["id", "username", "name", "description", "verified", "public_metrics", "profile_image_url"]
+                            )
                             if profile and profile.data:
                                 user_data = profile.data
                                 username = user_data.get('username')

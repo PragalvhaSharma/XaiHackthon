@@ -11,6 +11,8 @@ interface BackendCandidate {
     name: string;
     description?: string;
     profile_link?: string;
+    profile_image_url?: string;
+    location?: string;
     public_metrics?: {
       followers_count?: number;
       following_count?: number;
@@ -24,6 +26,19 @@ interface BackendCandidate {
     account_type: string;
     reason: string;
   };
+}
+
+async function fetchImageAsBase64(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return `data:${contentType};base64,${buffer.toString("base64")}`;
+  } catch (error) {
+    console.error("Failed to fetch avatar:", error);
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -116,13 +131,34 @@ export async function POST(req: NextRequest) {
               continue;
             }
 
-            // Create candidate in database
+            // Create candidate in database with hunt data
             const id = `hunt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const bio = candidateData.user.description || null;
+            const followers = candidateData.user.public_metrics?.followers_count || null;
+            const foundVia = candidateData.found_via_keyword || null;
+            const evaluationReason = candidateData.evaluation?.reason || null;
+            const location = candidateData.user.location || null;
+            const profileImageUrl = candidateData.user.profile_image_url 
+              ? candidateData.user.profile_image_url.replace("_normal", "_400x400")
+              : null;
+
+            let xAvatar: string | null = null;
+            if (profileImageUrl) {
+              xAvatar = await fetchImageAsBase64(profileImageUrl);
+            }
+
             const newCandidate = {
               id,
               name: candidateData.user.name || username,
               x: username,
               jobId,
+              bio,
+              followers,
+              foundVia,
+              evaluationReason,
+              location,
+              xAvatarUrl: profileImageUrl,
+              xAvatar,
               stage: "discovery", // Start in discovery, move to research when selected
               researchStatus: "pending",
               createdAt: new Date(),
@@ -138,9 +174,7 @@ export async function POST(req: NextRequest) {
               candidate: {
                 ...newCandidate,
                 evaluation: candidateData.evaluation,
-                foundVia: candidateData.found_via_keyword,
-                bio: candidateData.user.description,
-                followers: candidateData.user.public_metrics?.followers_count,
+                xAvatar,
               },
             });
 

@@ -26,6 +26,29 @@ function addProgress(candidateId: string, step: Omit<ResearchProgressStep, "id" 
     .run();
 }
 
+async function fetchAvatarData(handle: string, existingUrl?: string | null): Promise<{ dataUrl: string | null; sourceUrl: string | null }> {
+  const sources = [];
+  if (existingUrl) sources.push(existingUrl);
+  sources.push(`https://unavatar.io/twitter/${handle}?fallback=false`);
+
+  for (const url of sources) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const contentType = res.headers.get("content-type") || "image/jpeg";
+      const buffer = Buffer.from(await res.arrayBuffer());
+      return {
+        dataUrl: `data:${contentType};base64,${buffer.toString("base64")}`,
+        sourceUrl: url,
+      };
+    } catch (err) {
+      console.error(`[Research BG] Avatar fetch failed from ${url}:`, err);
+    }
+  }
+
+  return { dataUrl: null, sourceUrl: null };
+}
+
 export async function runResearchBackground(candidateId: string) {
   if (runningResearch.get(candidateId)) {
     console.log(`[Research] Already running for ${candidateId}`);
@@ -40,6 +63,21 @@ export async function runResearchBackground(candidateId: string) {
 
     console.log(`[Research BG] Starting for ${candidate.name} (@${candidate.x})`);
     addProgress(candidateId, { type: "start", status: "searching", message: `Starting deep research on @${candidate.x}...` });
+
+    // Fetch profile avatar early so downstream UI can show it
+    if (!candidate.xAvatar && !candidate.xAvatarUrl) {
+      addProgress(candidateId, { type: "avatar", status: "searching", message: "Fetching X profile photo..." });
+      const avatar = await fetchAvatarData(candidate.x, candidate.xAvatarUrl);
+      if (avatar.dataUrl) {
+        db.update(candidates)
+          .set({ xAvatar: avatar.dataUrl, xAvatarUrl: avatar.sourceUrl ?? null, updatedAt: new Date() })
+          .where(eq(candidates.id, candidateId))
+          .run();
+        addProgress(candidateId, { type: "avatar", status: "done", message: "Saved X profile photo" });
+      } else {
+        addProgress(candidateId, { type: "avatar", status: "error", message: "Could not fetch X profile photo" });
+      }
+    }
 
     const researchBlocks: string[] = [];
     const rawResearch: { x?: string; github?: string; linkedin?: string } = {};

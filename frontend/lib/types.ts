@@ -22,6 +22,10 @@ export interface ResearchResult {
   candidate: CandidateInput;
   researchNotes: string;
   rawResearch: ResearchData;
+  avatar?: {
+    dataUrl: string | null;
+    sourceUrl: string | null;
+  };
   sources: {
     linkedin?: string;
     x?: string;
@@ -30,11 +34,11 @@ export interface ResearchResult {
   };
 }
 
-export type ResearchStepType = "start" | "x" | "github" | "linkedin" | "synthesis" | "complete" | "error";
+export type ResearchStepType = "start" | "avatar" | "x" | "github" | "linkedin" | "synthesis" | "complete" | "error";
 export type ResearchStatus = "searching" | "done" | "error";
 
 export type ResearchStep =
   | { type: "start"; message: string }
-  | { type: "x" | "github" | "linkedin" | "synthesis"; status: ResearchStatus; message: string; data?: string }
+  | { type: "avatar" | "x" | "github" | "linkedin" | "synthesis"; status: ResearchStatus; message: string; data?: string }
   | { type: "complete"; result: ResearchResult }
   | { type: "error"; message: string };

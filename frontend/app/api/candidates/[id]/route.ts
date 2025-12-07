@@ -26,7 +26,7 @@ export async function PATCH(
 ) {
   try {
     const body = await req.json();
-    const { stage, score, researchNotes, rawResearch, researchStatus, github, linkedin } = body;
+    const { stage, score, researchNotes, rawResearch, researchStatus, github, linkedin, xAvatar, xAvatarUrl } = body;
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (stage !== undefined) updates.stage = stage;
@@ -36,6 +36,8 @@ export async function PATCH(
     if (researchStatus !== undefined) updates.researchStatus = researchStatus;
     if (github !== undefined) updates.github = github;
     if (linkedin !== undefined) updates.linkedin = linkedin;
+    if (xAvatar !== undefined) updates.xAvatar = xAvatar;
+    if (xAvatarUrl !== undefined) updates.xAvatarUrl = xAvatarUrl;
 
     db.update(candidates).set(updates).where(eq(candidates.id, params.id)).run();
     

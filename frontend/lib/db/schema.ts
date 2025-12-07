@@ -16,9 +16,17 @@ export const candidates = sqliteTable("candidates", {
   name: text("name").notNull(),
   email: text("email"),
   x: text("x").notNull(),
+  xAvatarUrl: text("x_avatar_url"),
+  xAvatar: text("x_avatar"),
   github: text("github"),
   linkedin: text("linkedin"),
   location: text("location"),
+  // Discovery/Hunt data
+  bio: text("bio"),
+  followers: integer("followers"),
+  foundVia: text("found_via"), // keyword that found them
+  evaluationReason: text("evaluation_reason"), // AI's reasoning for why they're a good fit
+  // Pipeline data
   stage: text("stage").notNull().default("discovery"),
   score: real("score"),
   researchStatus: text("research_status").default("pending"), // pending, running, done, error
@@ -36,7 +44,7 @@ export type NewCandidate = typeof candidates.$inferInsert;
 
 export interface ResearchProgressStep {
   id: number;
-  type: "x" | "github" | "linkedin" | "synthesis" | "start";
+  type: "x" | "avatar" | "github" | "linkedin" | "synthesis" | "start";
   status: "searching" | "done" | "error";
   message: string;
   timestamp: number;
