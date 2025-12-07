@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for, make_response
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, make_response, Response
 from flask_cors import CORS
 import json
 import os
@@ -9,6 +9,7 @@ from xai_sdk import Client as XAIClient
 from x_scraper import XScraper
 from x_analyzer import analyze_profile_for_job
 from x_head_hunter import XHeadHunter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 load_dotenv()
 
@@ -269,6 +270,162 @@ def hunt_candidates():
     except Exception as e:
         print(f"Error during hunt: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/hunt/stream', methods=['POST'])
+def hunt_candidates_stream():
+    """Stream hunt progress for candidates on X based on job description."""
+    if request.is_json:
+        job_desc = request.json.get('job_desc')
+    else:
+        job_desc = request.form.get('job_desc')
+    
+    if not job_desc:
+        return jsonify({"error": "Job description is required."}), 400
+
+    xai_client = get_xai_authenticated_client()
+    if not xai_client:
+        return jsonify({"error": "XAI not authenticated."}), 401
+ 
+    x_client = get_x_authenticated_client()
+    if not x_client:
+        return jsonify({"error": "X not authenticated. Please authorize first at /authorize"}), 401
+    
+    def generate():
+        def send(data):
+            return f"data: {json.dumps(data)}\n\n"
+        
+        try:
+            yield send({"type": "start", "message": "Starting candidate hunt..."})
+            
+            # Initialize head hunter
+            head_hunter = XHeadHunter(
+                job_description=job_desc,
+                x_client=x_client,
+                xai_client=xai_client
+            )
+            
+            # Step 1: Generate keywords
+            yield send({"type": "progress", "message": "Generating search keywords with Grok..."})
+            keywords = head_hunter._generate_keywords()
+            
+            if not keywords:
+                yield send({"type": "error", "message": "Failed to generate keywords"})
+                return
+            
+            yield send({"type": "keywords", "keywords": keywords, "message": f"Generated {len(keywords)} keywords: {', '.join(keywords)}"})
+            
+            # Step 2: Search for users
+            yield send({"type": "progress", "message": f"Searching X for users across {len(keywords)} keywords..."})
+            
+            users_map = {}
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                future_to_keyword = {
+                    executor.submit(head_hunter._search_users_by_keyword, keyword): keyword
+                    for keyword in keywords
+                }
+                
+                for future in as_completed(future_to_keyword):
+                    keyword = future_to_keyword[future]
+                    try:
+                        users = future.result()
+                        new_users = 0
+                        for user_data in users:
+                            username = user_data.get('username')
+                            if username and username not in users_map:
+                                users_map[username] = {
+                                    'user': user_data,
+                                    'found_via_keyword': keyword,
+                                    'tweets': []
+                                }
+                                new_users += 1
+                        if new_users > 0:
+                            yield send({"type": "search_progress", "keyword": keyword, "found": new_users, "total": len(users_map), "message": f"Found {new_users} new users via '{keyword}' ({len(users_map)} total)"})
+                    except Exception as e:
+                        print(f"Error searching keyword '{keyword}': {e}")
+            
+            yield send({"type": "progress", "message": f"Found {len(users_map)} unique users. Fetching tweets..."})
+            
+            # Step 3: Fetch tweets
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_username = {
+                    executor.submit(head_hunter._fetch_user_tweets, users_map[username]['user'].get('id')): username
+                    for username in users_map
+                    if users_map[username]['user'].get('id')
+                }
+                
+                tweets_fetched = 0
+                for future in as_completed(future_to_username):
+                    username = future_to_username[future]
+                    try:
+                        tweets = future.result()
+                        users_map[username]['tweets'] = tweets
+                        tweets_fetched += 1
+                        if tweets_fetched % 10 == 0:
+                            yield send({"type": "tweets_progress", "fetched": tweets_fetched, "total": len(users_map), "message": f"Fetched tweets for {tweets_fetched}/{len(users_map)} users"})
+                    except Exception as e:
+                        print(f"Error fetching tweets for @{username}: {e}")
+            
+            yield send({"type": "progress", "message": f"Evaluating {len(users_map)} candidates with Grok..."})
+            
+            # Step 4: Evaluate candidates
+            viable_candidates = {}
+            evaluated = 0
+            
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                future_to_username = {
+                    executor.submit(head_hunter._evaluate_candidate, username, users_map[username], users_map[username]['tweets']): username
+                    for username in users_map
+                }
+                
+                for future in as_completed(future_to_username):
+                    username = future_to_username[future]
+                    try:
+                        evaluation = future.result()
+                        users_map[username]['evaluation'] = evaluation
+                        evaluated += 1
+                        
+                        if evaluation.get('is_viable') and evaluation.get('account_type') == 'individual':
+                            viable_candidates[username] = users_map[username]
+                            yield send({
+                                "type": "candidate",
+                                "username": username,
+                                "candidate": users_map[username],
+                                "message": f"✓ @{username} is viable",
+                                "evaluated": evaluated,
+                                "total": len(users_map),
+                                "viable_count": len(viable_candidates)
+                            })
+                        else:
+                            if evaluated % 5 == 0:
+                                yield send({
+                                    "type": "eval_progress",
+                                    "evaluated": evaluated,
+                                    "total": len(users_map),
+                                    "viable_count": len(viable_candidates),
+                                    "message": f"Evaluated {evaluated}/{len(users_map)} ({len(viable_candidates)} viable)"
+                                })
+                    except Exception as e:
+                        print(f"Error evaluating @{username}: {e}")
+            
+            yield send({
+                "type": "complete",
+                "total_searched": len(users_map),
+                "total_viable": len(viable_candidates),
+                "candidates": viable_candidates,
+                "message": f"Hunt complete! Found {len(viable_candidates)} viable candidates out of {len(users_map)} searched"
+            })
+            
+        except Exception as e:
+            print(f"Hunt stream error: {e}")
+            yield send({"type": "error", "message": str(e)})
+    
+    return Response(generate(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': 'http://localhost:3000',
+        'Access-Control-Allow-Credentials': 'true'
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))

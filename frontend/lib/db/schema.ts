@@ -48,4 +48,6 @@ export interface ResearchProgressStep {
   status: "searching" | "done" | "error";
   message: string;
   timestamp: number;
+  data?: string;
+  candidateId?: string;
 }

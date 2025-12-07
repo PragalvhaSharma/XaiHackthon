@@ -69,6 +69,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Capture cookies from browser request to forward to backend
+    const cookieHeader = req.headers.get("cookie") || "";
+
     // Create a streaming response
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
@@ -86,7 +89,10 @@ export async function POST(req: NextRequest) {
           
           const response = await fetch(`${BACKEND_URL}/hunt`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { 
+              "Content-Type": "application/json",
+              "Cookie": cookieHeader,
+            },
             body: JSON.stringify({ job_desc: job.description }),
           });
 

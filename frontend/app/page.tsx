@@ -125,6 +125,8 @@ export default function RecruiterDashboard() {
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const activityRef = useRef<HTMLDivElement>(null);
   const activityIdRef = useRef(0);
+  const [expandedResearchSteps, setExpandedResearchSteps] = useState<Map<string, Set<number>>>(new Map());
+  const liveResearchProgressRef = useRef<Map<string, ResearchProgressStep[]>>(new Map());
 
   useEffect(() => {
     if (activityRef.current) {
@@ -192,6 +194,12 @@ export default function RecruiterDashboard() {
     if (researchingRef.current.has(candidate.id)) return;
     researchingRef.current.add(candidate.id);
     setLiveResearchProgress(prev => new Map(prev).set(candidate.id, []));
+    setExpandedResearchSteps(prev => {
+      const next = new Map(prev);
+      next.set(candidate.id, new Set());
+      return next;
+    });
+    liveResearchProgressRef.current = new Map(liveResearchProgressRef.current).set(candidate.id, []);
 
     try {
       const res = await fetch("/api/research", {
@@ -226,25 +234,25 @@ export default function RecruiterDashboard() {
               const msg = data.message || "";
               
               // Filter out noisy tool call messages
-              const isNoise = msg.includes("🔍") || 
-                              msg.match(/tool.*:\s*\{/) ||
-                              msg.match(/x_search.*:\s*\{/) ||
-                              msg.match(/web_search.*:\s*\{/) ||
-                              msg.includes("{}...");
+              const isNoise = !msg || msg.trim() === "" || msg.includes("{}...");
               
               if (isNoise) continue;
               
               const step: ResearchProgressStep = {
+                candidateId: candidate.id,
                 type: data.type,
                 status: data.status || "searching",
                 message: msg,
+                data: data.data,
                 id: Date.now(),
                 timestamp: Date.now(),
               };
               setLiveResearchProgress(prev => {
                 const updated = new Map(prev);
                 const existing = updated.get(candidate.id) || [];
-                updated.set(candidate.id, [...existing, step]);
+                const nextSteps = [...existing, step];
+                updated.set(candidate.id, nextSteps);
+                liveResearchProgressRef.current = updated;
                 return updated;
               });
               
@@ -269,6 +277,7 @@ export default function RecruiterDashboard() {
             
             // Handle completion - save to DB
             if (data.type === "complete" && data.result) {
+              const progressSteps = liveResearchProgressRef.current.get(candidate.id) || [];
               await fetch(`/api/candidates/${candidate.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
@@ -276,6 +285,7 @@ export default function RecruiterDashboard() {
                   researchStatus: "done",
                   researchNotes: data.result.researchNotes,
                   rawResearch: JSON.stringify(data.result.rawResearch),
+                  researchProgress: JSON.stringify(progressSteps),
                   github: data.result.candidate?.github || candidate.github,
                   linkedin: data.result.candidate?.linkedin || candidate.linkedin,
                   xAvatar: data.result.avatar?.dataUrl ?? candidate.xAvatar ?? null,
@@ -298,6 +308,7 @@ export default function RecruiterDashboard() {
       setLiveResearchProgress(prev => {
         const updated = new Map(prev);
         updated.delete(candidate.id);
+        liveResearchProgressRef.current = updated;
         return updated;
       });
     }
@@ -389,23 +400,37 @@ export default function RecruiterDashboard() {
     }
   };
 
-  // Hunt for candidates using the backend
+  // Hunt for candidates using the backend with streaming
   const startHunt = async () => {
     if (!selectedJob || isHunting) return;
     
+    if (!selectedJob.description) {
+      setLiveActivity(prev => [...prev.slice(-100), {
+        id: activityIdRef.current++,
+        candidateId: "",
+        candidateName: "Error",
+        message: "Job description is required for hunting",
+        timestamp: new Date(),
+        icon: "❌",
+      }]);
+      return;
+    }
+    
     setIsHunting(true);
-    setActiveStage("discovery"); // Show discovery stage during hunt
+    setActiveStage("discovery");
     setHuntLog([`Starting hunt for ${selectedJob.title}`]);
 
     try {
-      const res = await fetch("/api/hunt", {
+      // Call streaming endpoint directly with credentials
+      const res = await fetch("http://localhost:8080/hunt/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: selectedJob.id }),
+        body: JSON.stringify({ job_desc: selectedJob.description }),
+        credentials: "include",
       });
 
       if (!res.ok || !res.body) {
-        const error = await res.json();
+        const error = await res.json().catch(() => ({ error: "Hunt failed" }));
         setLiveActivity(prev => [...prev.slice(-100), {
           id: activityIdRef.current++,
           candidateId: "",
@@ -420,6 +445,7 @@ export default function RecruiterDashboard() {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let addedCount = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -442,49 +468,76 @@ export default function RecruiterDashboard() {
                 timestamp: new Date(),
                 icon: "🔍",
               }]);
-            } else if (data.type === "stats") {
-              setHuntLog(prev => [...prev.slice(-200), `${data.totalSearched} searched → ${data.totalViable} viable`]);
-              // Show the funnel stats
+            } else if (data.type === "keywords") {
+              setHuntLog(prev => [...prev.slice(-200), data.message]);
               setLiveActivity(prev => [...prev.slice(-100), {
                 id: activityIdRef.current++,
                 candidateId: "",
-                candidateName: "Hunt Stats",
-                message: `${data.totalSearched} searched → ${data.totalViable} viable`,
+                candidateName: "Keywords",
+                message: data.keywords.join(", "),
                 timestamp: new Date(),
-                icon: "📊",
+                icon: "🏷️",
               }]);
-            } else if (data.type === "candidate") {
-              setHuntLog(prev => [...prev.slice(-200), `Added @${data.candidate.x} (${data.candidate.name})`]);
-              // Add new candidate to the list
-              setCandidates(prev => [...prev, data.candidate]);
-              
-              // Add to live activity
-              setLiveActivity(prev => [...prev.slice(-100), {
-                id: activityIdRef.current++,
-                candidateId: data.candidate.id,
-                candidateName: data.candidate.name,
-                message: `Found via "${data.candidate.foundVia || "search"}"`,
-                timestamp: new Date(),
-                icon: "🎯",
-              }]);
-            } else if (data.type === "skip") {
-              setHuntLog(prev => [...prev.slice(-200), `Skipped: ${data.message}`]);
-              // Skip silently or show in activity
+            } else if (data.type === "search_progress") {
+              setHuntLog(prev => [...prev.slice(-200), data.message]);
               setLiveActivity(prev => [...prev.slice(-100), {
                 id: activityIdRef.current++,
                 candidateId: "",
-                candidateName: "Skipped",
+                candidateName: "Search",
                 message: data.message,
                 timestamp: new Date(),
-                icon: "⏭️",
+                icon: "🔎",
               }]);
+            } else if (data.type === "tweets_progress" || data.type === "eval_progress") {
+              setHuntLog(prev => [...prev.slice(-200), data.message]);
+            } else if (data.type === "candidate") {
+              // Save candidate to DB via Next.js API
+              const candidateData = data.candidate;
+              const username = data.username;
+              
+              try {
+                const saveRes = await fetch("/api/candidates", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    jobId: selectedJob.id,
+                    name: candidateData.user?.name || username,
+                    x: username,
+                    bio: candidateData.user?.description || null,
+                    followers: candidateData.user?.public_metrics?.followers_count || null,
+                    foundVia: candidateData.found_via_keyword || null,
+                    evaluationReason: candidateData.evaluation?.reason || null,
+                    location: candidateData.user?.location || null,
+                    xAvatarUrl: candidateData.user?.profile_image_url?.replace("_normal", "_400x400") || null,
+                  }),
+                });
+
+                if (saveRes.ok) {
+                  const saved = await saveRes.json();
+                  addedCount++;
+                  setCandidates(prev => [...prev, saved]);
+                  setHuntLog(prev => [...prev.slice(-200), `✓ Added @${username}`]);
+                  setLiveActivity(prev => [...prev.slice(-100), {
+                    id: activityIdRef.current++,
+                    candidateId: saved.id,
+                    candidateName: saved.name,
+                    message: `Found via "${candidateData.found_via_keyword || "search"}"`,
+                    timestamp: new Date(),
+                    icon: "🎯",
+                  }]);
+                } else if (saveRes.status === 409) {
+                  setHuntLog(prev => [...prev.slice(-200), `⏭️ @${username} already exists`]);
+                }
+              } catch (err) {
+                console.error(`Failed to save candidate ${username}:`, err);
+              }
             } else if (data.type === "complete") {
               setHuntLog(prev => [...prev.slice(-200), data.message]);
               setLiveActivity(prev => [...prev.slice(-100), {
                 id: activityIdRef.current++,
                 candidateId: "",
                 candidateName: "Hunt Complete",
-                message: data.message,
+                message: `${data.total_searched} searched → ${data.total_viable} viable → ${addedCount} added`,
                 timestamp: new Date(),
                 icon: "🎉",
               }]);
@@ -502,14 +555,13 @@ export default function RecruiterDashboard() {
           } catch {}
         }
       }
-    } catch (err) {
-      console.error("Hunt failed:", err);
-      setHuntLog(prev => [...prev.slice(-200), `Hunt failed: ${err instanceof Error ? err.message : "Unknown error"}`]);
+    } catch (error) {
+      console.error("Hunt error:", error);
       setLiveActivity(prev => [...prev.slice(-100), {
         id: activityIdRef.current++,
         candidateId: "",
         candidateName: "Error",
-        message: `Hunt failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+        message: error instanceof Error ? error.message : "Hunt failed",
         timestamp: new Date(),
         icon: "❌",
       }]);
@@ -519,8 +571,9 @@ export default function RecruiterDashboard() {
   };
 
   // Get candidates currently at a specific stage (for listing)
+  // Show ranking-stage candidates inside the research view so their summaries remain visible.
   const getCandidatesForStage = (stage: PipelineStage) => 
-    candidates.filter(c => c.stage === stage);
+    candidates.filter(c => stage === "research" ? (c.stage === "research" || c.stage === "ranking") : c.stage === stage);
 
   // Get cumulative count - candidates at this stage OR any later stage (for funnel counts)
   const STAGE_ORDER: PipelineStage[] = ["discovery", "research", "ranking", "outreach", "screening", "review"];
@@ -975,7 +1028,7 @@ export default function RecruiterDashboard() {
                 <div className="detail-body">
                   {/* Research Progress Cards */}
                   {(isCurrentlyResearching || researchProgress.length > 0) && activeStage === "research" && (
-                    <div className="research-cards">
+                    <div className={`research-cards ${isCurrentlyResearching ? 'active' : ''}`}>
                       <div className="cards-header">
                         <h4>Deep Research</h4>
                         {isCurrentlyResearching && <span className="live-badge">LIVE</span>}
@@ -990,10 +1043,15 @@ export default function RecruiterDashboard() {
                             </div>
                           </div>
                         )}
-                        {researchProgress.map((step, i) => {
-                          const isLatest = i === researchProgress.length - 1;
+                        {researchProgress
+                          .filter(step => selectedCandidate && (!step.candidateId || step.candidateId === selectedCandidate.id))
+                          .map((step, i, arr) => {
+                          const expandedSet = selectedCandidate ? (expandedResearchSteps.get(selectedCandidate.id) || new Set<number>()) : new Set<number>();
+                          const isLatest = i === arr.length - 1;
                           const isDone = step.status === "done";
                           const isError = step.status === "error";
+                          const hasDetail = !!step.data;
+                          const isExpanded = hasDetail && expandedSet.has(step.id);
                           
                           let icon = "◆";
                           if (step.type === "avatar") icon = "🖼️";
@@ -1004,14 +1062,44 @@ export default function RecruiterDashboard() {
                           if (step.type === "start") icon = "🚀";
                           
                           return (
-                            <div key={step.id} className={`research-card ${isLatest ? 'latest' : ''} ${isDone ? 'done' : ''} ${isError ? 'error' : ''}`}>
-                              <div className="card-icon">{icon}</div>
-                              <div className="card-content">
-                                <div className="card-title">{step.message}</div>
+                            <div 
+                              key={step.id} 
+                              className={`research-card ${isLatest ? 'latest' : ''} ${isDone ? 'done' : ''} ${isError ? 'error' : ''} ${hasDetail ? 'expandable' : ''}`}
+                              onClick={() => {
+                                if (!hasDetail || !selectedCandidate) return;
+                                setExpandedResearchSteps(prev => {
+                                  const next = new Map(prev);
+                                  const set = new Set(next.get(selectedCandidate.id) || []);
+                                  if (set.has(step.id)) {
+                                    set.delete(step.id);
+                                  } else {
+                                    set.add(step.id);
+                                  }
+                                  next.set(selectedCandidate.id, set);
+                                  return next;
+                                });
+                              }}
+                            >
+                              <div className="card-row">
+                                <div className="card-icon">{icon}</div>
+                                <div className="card-content">
+                                  <div className="card-title">
+                                    {step.message}
+                                    {hasDetail && !isExpanded && (
+                                      <span className="card-toggle"> ▸ Show output</span>
+                                    )}
+                                  </div>
+                                </div>
+                                {isLatest && isCurrentlyResearching && !isDone && <div className="card-spinner" />}
+                                {isDone && <div className="card-check">✓</div>}
+                                {isError && <div className="card-error">✗</div>}
                               </div>
-                              {isLatest && isCurrentlyResearching && !isDone && <div className="card-spinner" />}
-                              {isDone && <div className="card-check">✓</div>}
-                              {isError && <div className="card-error">✗</div>}
+                              {hasDetail && isExpanded && (
+                                <div className="card-detail open">
+                                  {step.data}
+                                  <span className="card-toggle">▾ Hide output</span>
+                                </div>
+                              )}
                             </div>
                           );
                         })}

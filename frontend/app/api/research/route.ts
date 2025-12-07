@@ -239,6 +239,9 @@ LINKEDIN_URL: url`,
           try {
             console.log("[Research] Starting X search with xai.responses for @" + candidate.x);
             
+            let streamedXContent = "";
+            let lastStreamUpdate = 0;
+            
             const xResult = await generateText({
               model: xai.responses("grok-4-1-fast-non-reasoning"),
               prompt: `Research the X/Twitter user @${candidate.x}.
@@ -272,17 +275,38 @@ Provide a summary of their X presence.`,
                     await sendStep({
                       type: "x",
                       status: "searching",
-                      message: `🔍 ${call.toolName}: ${args.slice(0, 100)}...`,
+                      message: `🔍 Searching: ${call.toolName}`,
                     });
                   }
                 }
                 if (step.toolResults && step.toolResults.length > 0) {
                   for (const result of step.toolResults) {
-                    console.log(`[X Research] Result:`, JSON.stringify(result.result).slice(0, 800));
+                    const resultStr = JSON.stringify(result.result);
+                    console.log(`[X Research] Result:`, resultStr.slice(0, 800));
+                    // Stream tool results as they come in
+                    const preview = resultStr.slice(0, 1000);
+                    await sendStep({
+                      type: "x",
+                      status: "searching",
+                      message: `📥 Got search results`,
+                      data: preview.length < resultStr.length ? preview + "..." : preview,
+                    });
                   }
                 }
                 if (step.text) {
                   console.log(`[X Research] Text:`, step.text.slice(0, 300));
+                  streamedXContent = step.text;
+                  // Throttle updates to every 500ms
+                  const now = Date.now();
+                  if (now - lastStreamUpdate > 500) {
+                    lastStreamUpdate = now;
+                    await sendStep({
+                      type: "x",
+                      status: "searching",
+                      message: `📝 Building profile summary...`,
+                      data: streamedXContent,
+                    });
+                  }
                 }
               },
             });
@@ -302,8 +326,8 @@ Provide a summary of their X presence.`,
             await sendStep({ 
               type: "x", 
               status: "done", 
-              message: `Found X profile for @${candidate.x}`,
-              data: xData.slice(0, 500)
+              message: `✓ X profile research complete`,
+              data: xData
             });
           } catch (err) {
             console.error("[Research] X search error:", err);
@@ -461,6 +485,14 @@ Provide a professional summary.`,
             rawResearch.linkedin = liData;
             researchBlocks.push(`## LinkedIn\n${liData}`);
             
+            const liPreview = liData.slice(0, 500);
+            await sendStep({
+              type: "linkedin",
+              status: "searching",
+              message: `LinkedIn summary: ${liPreview.slice(0, 140)}${liPreview.length > 140 ? "…" : ""}`,
+              data: liPreview,
+            });
+
             await sendStep({ 
               type: "linkedin", 
               status: "done", 
