@@ -33,6 +33,16 @@ export const candidates = sqliteTable("candidates", {
   researchProgress: text("research_progress"), // JSON array of progress steps
   researchNotes: text("research_notes"),
   rawResearch: text("raw_research"),
+  // Interview data
+  interviewStatus: text("interview_status").default("pending"), // pending, in_progress, completed
+  interviewScore: real("interview_score"), // final score from AI interview (0-100)
+  interviewTranscript: text("interview_transcript"), // JSON array of messages
+  interviewFeedback: text("interview_feedback"), // AI-generated summary/feedback
+  interviewStartedAt: integer("interview_started_at", { mode: "timestamp" }),
+  interviewCompletedAt: integer("interview_completed_at", { mode: "timestamp" }),
+  // DM data
+  dmContent: text("dm_content"), // the personalized DM that was sent
+  dmSentAt: integer("dm_sent_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });

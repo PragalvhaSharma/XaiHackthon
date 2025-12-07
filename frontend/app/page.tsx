@@ -3,6 +3,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { ResearchProgressStep } from "@/lib/db/schema";
 
+// GitHub icon component
+const GitHubIcon = ({ size = 14, className = "" }: { size?: number; className?: string }) => (
+  <svg 
+    viewBox="0 0 24 24" 
+    width={size} 
+    height={size} 
+    className={className}
+    fill="currentColor"
+  >
+    <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+  </svg>
+);
+
 function ResearchSummaryCards({ notes }: { notes: string }) {
   const sections = [
     { key: "background", label: "Background", icon: "👤", pattern: /\*\*Background[.\s]*\*\*\.?\s*([\s\S]*?)(?=\*\*(?:Technical Skills|Skills|Notable Work|Interests|Interview)|$)/i },
@@ -73,6 +86,16 @@ interface Candidate {
   researchProgress: string | null;
   researchNotes: string | null;
   rawResearch: string | null;
+  // Interview fields
+  interviewStatus: string | null;
+  interviewScore: number | null;
+  interviewTranscript: string | null;
+  interviewFeedback: string | null;
+  interviewStartedAt: string | null;
+  interviewCompletedAt: string | null;
+  // DM fields
+  dmContent: string | null;
+  dmSentAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -331,7 +354,7 @@ export default function RecruiterDashboard() {
               let icon = "◆";
               if (data.type === "avatar") icon = "🖼️";
               if (data.type === "x") icon = "𝕏";
-              if (data.type === "github") icon = "◉";
+              if (data.type === "github") icon = "⌘";
               if (data.type === "linkedin") icon = "in";
               if (data.type === "synthesis") icon = "✦";
               if (data.type === "start") icon = "🚀";
@@ -355,7 +378,7 @@ export default function RecruiterDashboard() {
                 body: JSON.stringify({
                   researchStatus: "done",
                   researchNotes: data.result.researchNotes,
-                  rawResearch: JSON.stringify(data.result.rawResearch),
+                  rawResearch: data.result.rawResearch,
                   researchProgress: JSON.stringify(progressSteps),
                   github: data.result.candidate?.github || candidate.github,
                   linkedin: data.result.candidate?.linkedin || candidate.linkedin,
@@ -648,10 +671,14 @@ export default function RecruiterDashboard() {
     }
   };
 
-  // Get candidates currently at a specific stage (for listing)
-  // Show ranking-stage candidates inside the research view so their summaries remain visible.
-  const getCandidatesForStage = (stage: PipelineStage) => 
-    candidates.filter(c => stage === "research" ? (c.stage === "research" || c.stage === "ranking") : c.stage === stage);
+  // Get candidates at this stage OR any later stage (cumulative funnel view)
+  const getCandidatesForStage = (stage: PipelineStage) => {
+    const stageIndex = STAGE_ORDER.indexOf(stage);
+    return candidates.filter(c => {
+      const candidateStageIndex = STAGE_ORDER.indexOf(c.stage as PipelineStage);
+      return candidateStageIndex >= stageIndex;
+    });
+  };
 
   // Get cumulative count - candidates at this stage OR any later stage (for funnel counts)
   const STAGE_ORDER: PipelineStage[] = ["discovery", "research", "ranking", "outreach", "screening", "review"];
@@ -892,7 +919,7 @@ export default function RecruiterDashboard() {
               </div>
             ) : (
               <a href="http://localhost:8080/authorize" className="auth-btn">
-                <span>𝕏</span> Connect X
+                <span>Login with 𝕏</span>
               </a>
             )}
           </div>
@@ -969,7 +996,7 @@ export default function RecruiterDashboard() {
                 </button>
                 {!xAuthUser && (
                   <div className="auth-hint-inline">
-                    Connect X in the header to use Find People
+                    Login with X in the header to use Find People
                   </div>
                 )}
               </div>
@@ -1106,113 +1133,9 @@ export default function RecruiterDashboard() {
                 </div>
 
                 <div className="detail-body">
-                  {/* Research Progress Cards */}
-                  {(isCurrentlyResearching || researchProgress.length > 0) && activeStage === "research" && (
-                    <div className={`research-cards ${isCurrentlyResearching ? 'active' : ''}`}>
-                      <div className="cards-header">
-                        <h4>Deep Research</h4>
-                        {isCurrentlyResearching && <span className="live-badge">LIVE</span>}
-                      </div>
-                      <div className="cards-list">
-                        {researchProgress.length === 0 && isCurrentlyResearching && (
-                          <div className="research-card pending">
-                            <div className="card-icon">⏳</div>
-                            <div className="card-content">
-                              <div className="card-title">Initializing</div>
-                              <div className="card-detail">Starting research agent...</div>
-                            </div>
-                          </div>
-                        )}
-                        {researchProgress
-                          .filter(step => selectedCandidate && (!step.candidateId || step.candidateId === selectedCandidate.id))
-                          .map((step, i, arr) => {
-                          const expandedSet = selectedCandidate ? (expandedResearchSteps.get(selectedCandidate.id) || new Set<number>()) : new Set<number>();
-                          const isLatest = i === arr.length - 1;
-                          const isDone = step.status === "done";
-                          const isError = step.status === "error";
-                          const hasDetail = !!step.data;
-                          const isExpanded = hasDetail && expandedSet.has(step.id);
-                          
-                          let icon = "◆";
-                          if (step.type === "avatar") icon = "🖼️";
-                          if (step.type === "x") icon = "𝕏";
-                          if (step.type === "github") icon = "◉";
-                          if (step.type === "linkedin") icon = "in";
-                          if (step.type === "synthesis") icon = "✦";
-                          if (step.type === "start") icon = "🚀";
-                          
-                          return (
-                            <div 
-                              key={step.id} 
-                              className={`research-card ${isLatest ? 'latest' : ''} ${isDone ? 'done' : ''} ${isError ? 'error' : ''} ${hasDetail ? 'expandable' : ''}`}
-                              onClick={() => {
-                                if (!hasDetail || !selectedCandidate) return;
-                                setExpandedResearchSteps(prev => {
-                                  const next = new Map(prev);
-                                  const set = new Set(next.get(selectedCandidate.id) || []);
-                                  if (set.has(step.id)) {
-                                    set.delete(step.id);
-                                  } else {
-                                    set.add(step.id);
-                                  }
-                                  next.set(selectedCandidate.id, set);
-                                  return next;
-                                });
-                              }}
-                            >
-                              <div className="card-row">
-                                <div className="card-icon">{icon}</div>
-                                <div className="card-content">
-                                  <div className="card-title">
-                                    {step.message}
-                                    {hasDetail && !isExpanded && (
-                                      <span className="card-toggle"> ▸ Show output</span>
-                                    )}
-                                  </div>
-                                </div>
-                                {isLatest && isCurrentlyResearching && !isDone && <div className="card-spinner" />}
-                                {isDone && <div className="card-check">✓</div>}
-                                {isError && <div className="card-error">✗</div>}
-                              </div>
-                              {hasDetail && isExpanded && (
-                                <div className="card-detail open">
-                                  {step.data}
-                                  <span className="card-toggle">▾ Hide output</span>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Research Results as Cards */}
-                  {selectedCandidate.researchNotes && (
-                    <div className="research-results">
-                      <div className="results-header">
-                        <h4>Research Summary</h4>
-                        <div className="source-links">
-                          <a href={`https://x.com/${selectedCandidate.x}`} target="_blank" rel="noopener noreferrer">𝕏</a>
-                          {selectedCandidate.github && <a href={`https://github.com/${selectedCandidate.github}`} target="_blank" rel="noopener noreferrer">◉</a>}
-                          {selectedCandidate.linkedin && <a href={selectedCandidate.linkedin} target="_blank" rel="noopener noreferrer">in</a>}
-                        </div>
-                      </div>
-                      <ResearchSummaryCards notes={selectedCandidate.researchNotes} />
-                    </div>
-                  )}
-
-                  {/* Pending state */}
-                  {!selectedCandidate.researchNotes && !isCurrentlyResearching && researchProgress.length === 0 && activeStage === "research" && (
-                    <div className="research-pending">
-                      <h4>Queued for Research</h4>
-                      <p>Will begin automatically</p>
-                    </div>
-                  )}
-
-                  {/* Discovery Detail View */}
+                  {/* ==================== DISCOVERY STAGE ==================== */}
                   {activeStage === "discovery" && (
-                    <div className="discovery-detail">
+                    <div className="stage-content discovery-detail">
                       {/* Bio */}
                       {selectedCandidate.bio && (
                         <div className="discovery-section">
@@ -1252,111 +1175,493 @@ export default function RecruiterDashboard() {
                         </div>
                       )}
 
-                      {/* Actions */}
-                      <div className="discovery-actions-detail">
-                        <a 
-                          href={`https://x.com/${selectedCandidate.x}`} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="btn-outline"
-                        >
-                          𝕏 View Profile
-                        </a>
-                        <button 
-                          className="btn-primary"
-                          onClick={async () => {
-                            await fetch(`/api/candidates/${selectedCandidate.id}`, {
-                              method: "PATCH",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ stage: "research" }),
-                            });
-                            setCandidates(prev => prev.map(c => 
-                              c.id === selectedCandidate.id ? { ...c, stage: "research" } : c
-                            ));
-                            setActiveStage("research");
-                          }}
-                        >
-                          🔬 Start Deep Research
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Ranking Stage */}
-                  {activeStage === "ranking" && (
-                    <div className="ranking-detail">
-                      {rankingCandidates.has(selectedCandidate.id) ? (
-                        <div className="ranking-in-progress">
-                          <div className="ranking-spinner-container">
-                            <span className="ranking-spinner" />
-                          </div>
-                          <h4>AI Ranking in Progress</h4>
-                          <p>Grok is evaluating this candidate against the job requirements...</p>
-                        </div>
-                      ) : selectedCandidate.score ? (
-                        <div className="ranking-complete">
-                          <div className="score-display">
-                            <div className={`score-circle ${selectedCandidate.score >= 75 ? 'excellent' : selectedCandidate.score >= 60 ? 'good' : selectedCandidate.score >= 40 ? 'moderate' : 'poor'}`}>
-                              <span className="score-number">{selectedCandidate.score}</span>
-                              <span className="score-max">/100</span>
-                            </div>
-                            <div className="score-label">
-                              {selectedCandidate.score >= 90 ? "Exceptional Fit" :
-                               selectedCandidate.score >= 75 ? "Strong Fit" :
-                               selectedCandidate.score >= 60 ? "Good Fit" :
-                               selectedCandidate.score >= 40 ? "Moderate Fit" : "Needs Review"}
-                            </div>
-                          </div>
-                          <div className="ranking-actions">
-                            <button 
-                              className="btn-primary"
-                              onClick={async () => {
-                                await fetch(`/api/candidates/${selectedCandidate.id}`, {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ stage: "outreach" }),
-                                });
-                                setCandidates(prev => prev.map(c => 
-                                  c.id === selectedCandidate.id ? { ...c, stage: "outreach" } : c
-                                ));
-                                setActiveStage("outreach");
-                              }}
-                            >
-                              ✉️ Move to Outreach
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="ranking-pending">
-                          <div className="ranking-icon">📊</div>
-                          <h4>Ready for Ranking</h4>
-                          <p>This candidate has completed research and is ready to be scored.</p>
+                      {/* Actions - only show if candidate is at this stage */}
+                      {selectedCandidate.stage === "discovery" && (
+                        <div className="stage-actions">
                           <button 
-                            className="btn-primary"
-                            onClick={() => startRanking(selectedCandidate)}
-                            disabled={!selectedCandidate.researchNotes}
+                            className="btn-next-stage to-research"
+                            onClick={async () => {
+                              await fetch(`/api/candidates/${selectedCandidate.id}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ stage: "research" }),
+                              });
+                              setCandidates(prev => prev.map(c => 
+                                c.id === selectedCandidate.id ? { ...c, stage: "research" } : c
+                              ));
+                              setActiveStage("research");
+                            }}
                           >
-                            🤖 Start AI Ranking
+                            <span className="btn-icon">🔬</span>
+                            <span>Start Deep Research</span>
+                            <span className="btn-arrow">→</span>
                           </button>
-                          {!selectedCandidate.researchNotes && (
-                            <p className="ranking-hint">Complete research first to enable ranking</p>
-                          )}
                         </div>
                       )}
                     </div>
                   )}
 
-                  {/* Mock stages */}
-                  {activeStage !== "research" && activeStage !== "discovery" && activeStage !== "ranking" && (
-                    <div className="mock-section">
-                      <div className="mock-icon">{PIPELINE_STAGES.find(s => s.key === activeStage)?.icon}</div>
-                      <h4>{PIPELINE_STAGES.find(s => s.key === activeStage)?.label}</h4>
-                      <p className="mock-description">
-                        {activeStage === "outreach" && "Personalized DM content generated based on deep research findings"}
-                        {activeStage === "screening" && "AI conducts phone screen asking about background, projects, and research"}
-                        {activeStage === "review" && "Recruiter reviews candidates and provides feedback to improve ranking"}
-                      </p>
-                      <div className="mock-badge-large">Coming Soon</div>
+                  {/* ==================== RESEARCH STAGE ==================== */}
+                  {activeStage === "research" && (
+                    <div className="stage-content research-stage">
+                      {/* Research Progress Cards (live) */}
+                      {(isCurrentlyResearching || researchProgress.length > 0) && (
+                        <div className={`research-cards ${isCurrentlyResearching ? 'active' : ''}`}>
+                          <div className="cards-header">
+                            <h4>Deep Research</h4>
+                            {isCurrentlyResearching && <span className="live-badge">LIVE</span>}
+                          </div>
+                          <div className="cards-list">
+                            {researchProgress.length === 0 && isCurrentlyResearching && (
+                              <div className="research-card pending">
+                                <div className="card-icon">⏳</div>
+                                <div className="card-content">
+                                  <div className="card-title">Initializing</div>
+                                  <div className="card-detail">Starting research agent...</div>
+                                </div>
+                              </div>
+                            )}
+                            {(() => {
+                              // Filter steps for this candidate
+                              const filtered = researchProgress
+                                .filter(step => selectedCandidate && (!step.candidateId || step.candidateId === selectedCandidate.id));
+                              
+                              // Dedupe: only keep the latest step per type, preserving order of first appearance
+                              const typeLastIndex = new Map<string, number>();
+                              filtered.forEach((step, idx) => typeLastIndex.set(step.type, idx));
+                              
+                              return filtered.filter((step, idx) => typeLastIndex.get(step.type) === idx);
+                            })().map((step, i, arr) => {
+                              const expandedSet = selectedCandidate ? (expandedResearchSteps.get(selectedCandidate.id) || new Set<number>()) : new Set<number>();
+                              const isLatest = i === arr.length - 1;
+                              const isDone = step.status === "done";
+                              const isError = step.status === "error";
+                              const hasDetail = !!step.data;
+                              const isExpanded = hasDetail && expandedSet.has(step.id);
+                              
+                              let icon: React.ReactNode = "◆";
+                              if (step.type === "avatar") icon = "🖼️";
+                              if (step.type === "x") icon = "𝕏";
+                              if (step.type === "github") icon = <GitHubIcon size={14} />;
+                              if (step.type === "linkedin") icon = "in";
+                              if (step.type === "synthesis") icon = "✦";
+                              if (step.type === "start") icon = "🚀";
+                              
+                              return (
+                                <div 
+                                  key={step.id} 
+                                  className={`research-card ${isLatest ? 'latest' : ''} ${isDone ? 'done' : ''} ${isError ? 'error' : ''} ${hasDetail ? 'expandable' : ''}`}
+                                  onClick={() => {
+                                    if (!hasDetail || !selectedCandidate) return;
+                                    setExpandedResearchSteps(prev => {
+                                      const next = new Map(prev);
+                                      const set = new Set(next.get(selectedCandidate.id) || []);
+                                      if (set.has(step.id)) {
+                                        set.delete(step.id);
+                                      } else {
+                                        set.add(step.id);
+                                      }
+                                      next.set(selectedCandidate.id, set);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <div className="card-row">
+                                    <div className="card-icon">{icon}</div>
+                                    <div className="card-content">
+                                      <div className="card-title">
+                                        {step.message}
+                                        {hasDetail && !isExpanded && (
+                                          <span className="card-toggle"> ▸ Show output</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {isLatest && isCurrentlyResearching && !isDone && <div className="card-spinner" />}
+                                    {isDone && <div className="card-check">✓</div>}
+                                    {isError && <div className="card-error">✗</div>}
+                                  </div>
+                                  {hasDetail && isExpanded && (
+                                    <div className="card-detail open">
+                                      {step.data}
+                                      <span className="card-toggle">▾ Hide output</span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Pending state */}
+                      {!selectedCandidate.researchNotes && !isCurrentlyResearching && researchProgress.length === 0 && (
+                        <div className="research-pending">
+                          <h4>Queued for Research</h4>
+                          <p>Will begin automatically</p>
+                        </div>
+                      )}
+
+                      {/* Research Results */}
+                      {selectedCandidate.researchNotes && (
+                        <div className="research-results">
+                          <div className="results-header">
+                            <h4>Research Summary</h4>
+                            <div className="source-links">
+                              <a href={`https://x.com/${selectedCandidate.x}`} target="_blank" rel="noopener noreferrer">𝕏</a>
+                              {selectedCandidate.github && <a href={`https://github.com/${selectedCandidate.github}`} target="_blank" rel="noopener noreferrer"><GitHubIcon size={14} /></a>}
+                              {selectedCandidate.linkedin && <a href={selectedCandidate.linkedin} target="_blank" rel="noopener noreferrer">in</a>}
+                            </div>
+                          </div>
+                          <ResearchSummaryCards notes={selectedCandidate.researchNotes} />
+                        </div>
+                      )}
+
+                      {/* Raw Research Data */}
+                      {selectedCandidate.rawResearch && (() => {
+                        try {
+                          let raw = JSON.parse(selectedCandidate.rawResearch) as { x?: string; github?: string; linkedin?: string; additionalLinks?: string } | string;
+                          // Handle double-encoded JSON from older data
+                          if (typeof raw === 'string') {
+                            raw = JSON.parse(raw);
+                          }
+                          const hasAnyData = typeof raw === 'object' && (raw.x || raw.github || raw.linkedin || raw.additionalLinks);
+                          if (!hasAnyData) return null;
+                          const data = raw as { x?: string; github?: string; linkedin?: string; additionalLinks?: string };
+                          return (
+                            <div className="raw-research-section">
+                              <div className="raw-research-header">
+                                <h4>Raw Research Data</h4>
+                              </div>
+                              <div className="raw-research-blocks">
+                                {data.x && (
+                                  <details className="raw-block">
+                                    <summary>
+                                      <span className="raw-icon">𝕏</span>
+                                      <span>X/Twitter Profile</span>
+                                    </summary>
+                                    <pre className="raw-content">{data.x}</pre>
+                                  </details>
+                                )}
+                                {data.github && (
+                                  <details className="raw-block">
+                                    <summary>
+                                      <span className="raw-icon"><GitHubIcon size={14} /></span>
+                                      <span>GitHub Profile</span>
+                                    </summary>
+                                    <pre className="raw-content">{data.github}</pre>
+                                  </details>
+                                )}
+                                {data.linkedin && (
+                                  <details className="raw-block">
+                                    <summary>
+                                      <span className="raw-icon">in</span>
+                                      <span>LinkedIn Profile</span>
+                                    </summary>
+                                    <pre className="raw-content">{data.linkedin}</pre>
+                                  </details>
+                                )}
+                                {data.additionalLinks && (
+                                  <details className="raw-block">
+                                    <summary>
+                                      <span className="raw-icon">🔗</span>
+                                      <span>Additional Research</span>
+                                    </summary>
+                                    <pre className="raw-content">{data.additionalLinks}</pre>
+                                  </details>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        } catch (e) {
+                          console.error("Failed to parse rawResearch:", e);
+                          return null;
+                        }
+                      })()}
+
+                      {/* Actions - only show if candidate is at this stage */}
+                      {selectedCandidate.stage === "research" && selectedCandidate.researchNotes && (
+                        <div className="stage-actions">
+                          <button 
+                            className="btn-next-stage to-ranking"
+                            onClick={async () => {
+                              await fetch(`/api/candidates/${selectedCandidate.id}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ stage: "ranking" }),
+                              });
+                              setCandidates(prev => prev.map(c => 
+                                c.id === selectedCandidate.id ? { ...c, stage: "ranking" } : c
+                              ));
+                              setActiveStage("ranking");
+                            }}
+                          >
+                            <span className="btn-icon">📊</span>
+                            <span>Move to Ranking</span>
+                            <span className="btn-arrow">→</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ==================== RANKING STAGE ==================== */}
+                  {activeStage === "ranking" && (
+                    <div className="stage-content ranking-stage">
+                      {/* Score Display / Ranking Action */}
+                      <div className="ranking-section">
+                        {rankingCandidates.has(selectedCandidate.id) ? (
+                          <div className="ranking-in-progress">
+                            <div className="ranking-spinner-container">
+                              <span className="ranking-spinner" />
+                            </div>
+                            <h4>AI Ranking in Progress</h4>
+                            <p>Grok is evaluating this candidate against the job requirements...</p>
+                          </div>
+                        ) : selectedCandidate.score ? (
+                          <div className="ranking-complete">
+                            <div className="score-display">
+                              <div className={`score-circle ${selectedCandidate.score >= 75 ? 'excellent' : selectedCandidate.score >= 60 ? 'good' : selectedCandidate.score >= 40 ? 'moderate' : 'poor'}`}>
+                                <span className="score-number">{selectedCandidate.score}</span>
+                                <span className="score-max">/100</span>
+                              </div>
+                              <div className="score-label">
+                                {selectedCandidate.score >= 90 ? "Exceptional Fit" :
+                                 selectedCandidate.score >= 75 ? "Strong Fit" :
+                                 selectedCandidate.score >= 60 ? "Good Fit" :
+                                 selectedCandidate.score >= 40 ? "Moderate Fit" : "Needs Review"}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="ranking-pending">
+                            <div className="ranking-icon">📊</div>
+                            <h4>Ready for Ranking</h4>
+                            <p>This candidate has completed research and is ready to be scored.</p>
+                            <button 
+                              className="btn-primary"
+                              onClick={() => startRanking(selectedCandidate)}
+                              disabled={!selectedCandidate.researchNotes}
+                            >
+                              🤖 Start AI Ranking
+                            </button>
+                            {!selectedCandidate.researchNotes && (
+                              <p className="ranking-hint">Complete research first to enable ranking</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Actions - only show if candidate is at this stage */}
+                      {selectedCandidate.stage === "ranking" && selectedCandidate.score && (
+                        <div className="stage-actions">
+                          <button 
+                            className="btn-next-stage to-outreach"
+                            onClick={async () => {
+                              await fetch(`/api/candidates/${selectedCandidate.id}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ stage: "outreach" }),
+                              });
+                              setCandidates(prev => prev.map(c => 
+                                c.id === selectedCandidate.id ? { ...c, stage: "outreach" } : c
+                              ));
+                              setActiveStage("outreach");
+                            }}
+                          >
+                            <span className="btn-icon">✉️</span>
+                            <span>Move to Outreach</span>
+                            <span className="btn-arrow">→</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ==================== OUTREACH STAGE ==================== */}
+                  {activeStage === "outreach" && (
+                    <div className="stage-content outreach-stage">
+                      {/* Score Badge */}
+                      {selectedCandidate.score && (
+                        <div className="score-badge-row">
+                          <div className={`score-badge ${selectedCandidate.score >= 75 ? 'excellent' : selectedCandidate.score >= 60 ? 'good' : 'moderate'}`}>
+                            Score: {selectedCandidate.score}/100
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Outreach Status */}
+                      <div className="outreach-section">
+                        <div className="mock-icon">✉️</div>
+                        <h4>Personalized Outreach</h4>
+                        <p className="mock-description">AI-generated DM based on research findings</p>
+                        <div className="mock-badge-large">Coming Soon</div>
+                      </div>
+
+                      {/* Actions - only show if candidate is at this stage */}
+                      {selectedCandidate.stage === "outreach" && (
+                        <div className="stage-actions">
+                          <button 
+                            className="btn-next-stage to-screening"
+                            onClick={async () => {
+                              await fetch(`/api/candidates/${selectedCandidate.id}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ stage: "screening" }),
+                              });
+                              setCandidates(prev => prev.map(c => 
+                                c.id === selectedCandidate.id ? { ...c, stage: "screening" } : c
+                              ));
+                              setActiveStage("screening");
+                            }}
+                          >
+                            <span className="btn-icon">📞</span>
+                            <span>Move to Screening</span>
+                            <span className="btn-arrow">→</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ==================== SCREENING STAGE ==================== */}
+                  {activeStage === "screening" && (
+                    <div className="stage-content screening-stage">
+                      {/* Score Badges */}
+                      <div className="score-badge-row">
+                        {selectedCandidate.score && (
+                          <div className={`score-badge ${selectedCandidate.score >= 75 ? 'excellent' : selectedCandidate.score >= 60 ? 'good' : 'moderate'}`}>
+                            Research: {selectedCandidate.score}/100
+                          </div>
+                        )}
+                        {selectedCandidate.interviewScore && (
+                          <div className={`score-badge ${selectedCandidate.interviewScore >= 70 ? 'excellent' : selectedCandidate.interviewScore >= 50 ? 'good' : 'moderate'}`}>
+                            Interview: {selectedCandidate.interviewScore}/100
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Interview Status Section */}
+                      <div className="screening-section">
+                        <div className="mock-icon">📞</div>
+                        <h4>AI Phone Screen</h4>
+                        
+                        {/* Interview Link */}
+                        <div className="interview-link-section">
+                          <label>Interview Link</label>
+                          <div className="interview-link-row">
+                            <input 
+                              type="text" 
+                              readOnly 
+                              value={`${typeof window !== 'undefined' ? window.location.origin : ''}/interview/${selectedCandidate.id}`}
+                            />
+                            <button 
+                              className="copy-btn"
+                              onClick={() => {
+                                navigator.clipboard.writeText(`${window.location.origin}/interview/${selectedCandidate.id}`);
+                              }}
+                            >
+                              📋
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Status */}
+                        <div className="interview-status">
+                          {selectedCandidate.interviewStatus === "completed" ? (
+                            <div className="status-complete">
+                              <span className="status-icon">✅</span>
+                              <span>Interview Completed</span>
+                              <span className="status-score">{selectedCandidate.interviewScore}/100</span>
+                            </div>
+                          ) : selectedCandidate.interviewStatus === "in_progress" ? (
+                            <div className="status-in-progress">
+                              <span className="status-icon">⏳</span>
+                              <span>Interview In Progress</span>
+                            </div>
+                          ) : (
+                            <div className="status-pending">
+                              <span className="status-icon">📩</span>
+                              <span>Awaiting Interview</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Feedback if completed */}
+                        {selectedCandidate.interviewStatus === "completed" && selectedCandidate.interviewFeedback && (
+                          <div className="interview-feedback">
+                            <h5>AI Feedback</h5>
+                            <p>{selectedCandidate.interviewFeedback}</p>
+                          </div>
+                        )}
+
+                        {/* Transcript if completed */}
+                        {selectedCandidate.interviewStatus === "completed" && selectedCandidate.interviewTranscript && (
+                          <details className="interview-transcript">
+                            <summary>View Transcript</summary>
+                            <div className="transcript-content">
+                              {(() => {
+                                try {
+                                  const messages = JSON.parse(selectedCandidate.interviewTranscript);
+                                  return messages.map((msg: { role: string; content: string }, i: number) => (
+                                    <div key={i} className={`transcript-msg ${msg.role}`}>
+                                      <strong>{msg.role === "assistant" ? "AI" : selectedCandidate.name}:</strong>
+                                      <span>{msg.content.replace(/\s*\[\d+\/100\]\s*$/, "")}</span>
+                                    </div>
+                                  ));
+                                } catch {
+                                  return <p>Could not load transcript</p>;
+                                }
+                              })()}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+
+                      {/* Actions - only show if candidate is at this stage and interview completed */}
+                      {selectedCandidate.stage === "screening" && selectedCandidate.interviewStatus === "completed" && (
+                        <div className="stage-actions">
+                          <button 
+                            className="btn-next-stage to-review"
+                            onClick={async () => {
+                              await fetch(`/api/candidates/${selectedCandidate.id}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ stage: "review" }),
+                              });
+                              setCandidates(prev => prev.map(c => 
+                                c.id === selectedCandidate.id ? { ...c, stage: "review" } : c
+                              ));
+                              setActiveStage("review");
+                            }}
+                          >
+                            <span className="btn-icon">✓</span>
+                            <span>Move to Review</span>
+                            <span className="btn-arrow">→</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ==================== REVIEW STAGE ==================== */}
+                  {activeStage === "review" && (
+                    <div className="stage-content review-stage">
+                      {/* Score Badge */}
+                      {selectedCandidate.score && (
+                        <div className="score-badge-row">
+                          <div className={`score-badge ${selectedCandidate.score >= 75 ? 'excellent' : selectedCandidate.score >= 60 ? 'good' : 'moderate'}`}>
+                            Score: {selectedCandidate.score}/100
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Review Status */}
+                      <div className="review-section">
+                        <div className="mock-icon">✓</div>
+                        <h4>Recruiter Review</h4>
+                        <p className="mock-description">Review candidates and provide feedback to improve ranking</p>
+                        <div className="mock-badge-large">Coming Soon</div>
+                      </div>
                     </div>
                   )}
                 </div>

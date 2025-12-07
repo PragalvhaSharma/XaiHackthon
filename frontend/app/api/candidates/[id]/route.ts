@@ -26,7 +26,15 @@ export async function PATCH(
 ) {
   try {
     const body = await req.json();
-    const { stage, score, researchNotes, rawResearch, researchStatus, github, linkedin, xAvatar, xAvatarUrl } = body;
+    const { 
+      stage, score, researchNotes, rawResearch, researchStatus, 
+      github, linkedin, xAvatar, xAvatarUrl,
+      // Interview fields
+      interviewStatus, interviewScore, interviewTranscript, interviewFeedback,
+      interviewStartedAt, interviewCompletedAt,
+      // DM fields
+      dmContent, dmSentAt
+    } = body;
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (stage !== undefined) updates.stage = stage;
@@ -38,6 +46,16 @@ export async function PATCH(
     if (linkedin !== undefined) updates.linkedin = linkedin;
     if (xAvatar !== undefined) updates.xAvatar = xAvatar;
     if (xAvatarUrl !== undefined) updates.xAvatarUrl = xAvatarUrl;
+    // Interview fields
+    if (interviewStatus !== undefined) updates.interviewStatus = interviewStatus;
+    if (interviewScore !== undefined) updates.interviewScore = interviewScore;
+    if (interviewTranscript !== undefined) updates.interviewTranscript = interviewTranscript;
+    if (interviewFeedback !== undefined) updates.interviewFeedback = interviewFeedback;
+    if (interviewStartedAt !== undefined) updates.interviewStartedAt = new Date(interviewStartedAt);
+    if (interviewCompletedAt !== undefined) updates.interviewCompletedAt = new Date(interviewCompletedAt);
+    // DM fields
+    if (dmContent !== undefined) updates.dmContent = dmContent;
+    if (dmSentAt !== undefined) updates.dmSentAt = new Date(dmSentAt);
 
     db.update(candidates).set(updates).where(eq(candidates.id, params.id)).run();
     

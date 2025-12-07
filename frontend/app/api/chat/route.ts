@@ -14,19 +14,21 @@ type ChatBody = {
   researchNotes?: string;
   rawResearch?: ResearchData | null;
   candidate?: CandidateInput;
+  currentScore?: number;
 };
 
 export async function POST(req: Request) {
-  const { messages, researchNotes, rawResearch, candidate }: ChatBody = await req.json();
+  const { messages, researchNotes, rawResearch, candidate, currentScore = 30 }: ChatBody = await req.json();
 
   const system = buildSystemPrompt(
     researchNotes ?? "",
     rawResearch ?? {},
-    candidate ?? { name: "Anonymous", email: "" }
+    candidate ?? { name: "Anonymous", email: "" },
+    currentScore
   );
 
   const result = streamText({
-    model: xai("grok-4-1-fast-non-reasoning"),
+    model: xai("grok-3-fast"),
     system,
     messages,
     temperature: 0.7,
