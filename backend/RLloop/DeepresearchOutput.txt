@@ -1,0 +1,48 @@
+Name: Adrian K. Sharma
+Email: aksharma@mit.edu
+Location: Boston, MA
+Timezone: America/New_York
+
+Background:
+- PhD candidate in Computer Science at MIT focusing on distributed training efficiency.
+- Previously Software Engineer at Nvidia working on CUDA kernel optimizations.
+- Research interest in systems for large-scale model training, fault-tolerance in distributed compute, and low-level GPU debugging.
+
+GitHub Summary:
+- 37 repositories.
+- Notable projects:
+  * "llm-dist-trainer": a custom distributed training framework built on top of PyTorch with NCCL backend. 650 stars.
+  * "fast-kernel-proto": experimental CUDA kernels for attention mechanisms. 12 contributors.
+- Languages: C++, Python, Rust.
+- Activity level: high (commits in the last 7 days).
+- Demonstrates comfort with low-level memory layout and GPU profiling tools like Nsight Systems.
+
+Publications:
+- “Scaling Attention Kernels on Multi-GPU Systems.” NeurIPS 2023.
+- “Adaptive Sharding for MoE (Mixture of Experts) Routing.” ICML 2024.
+- Both papers include extensive ablation studies and reproducible code.
+
+LinkedIn Summary:
+- 4 years full-time engineering experience.
+- Titles:
+  * 2020–2022: Software Engineer, Nvidia.
+  * 2022–Present: Research Engineer / PhD Candidate, MIT CSAIL.
+- Endorsements for CUDA, PyTorch internals, distributed systems, systems architecture.
+
+Writing Samples:
+- Personal blog: adriansharma.dev/blog
+  * “Why NCCL Breaks When You Scale Past 512 GPUs.”
+  * “A Practical Guide to Debugging Deadlocks in Distributed Training.”
+- Writing style: concise, technical, demonstrates clear ability to break complex topics into operational explanations.
+
+Conference Talks:
+- Led workshop at “Systems for ML Summit 2024” on optimizing interconnect bandwidth.
+- Gave invited talk at Nvidia Research on kernel-level performance improvements.
+
+Social/Community Behavior:
+- Active on Twitter discussing ML systems bottlenecks, open-source reproducibility, kernel fusion techniques.
+- No low-signal or noisy behavior; appears focused on technical topics.
+
+Projects of Interest:
+- Built a profiling tool that automatically detects communication hotspots in data-parallel training.
+- Designe
