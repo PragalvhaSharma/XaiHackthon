@@ -1,26 +1,28 @@
 {
-  "name": "frontend",
+  "name": "recruiter-guard",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "next lint"
   },
   "dependencies": {
-    "next": "16.0.7",
-    "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "@ai-sdk/react": "^2.0.108",
+    "@ai-sdk/xai": "^2.0.39",
+    "ai": "^5.0.0",
+    "next": "14.2.5",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.0.7",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "@types/node": "^20.17.9",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.5",
+    "typescript": "^5.6.3"
   }
 }
