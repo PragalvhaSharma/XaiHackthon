@@ -18,6 +18,7 @@ export const candidates = sqliteTable("candidates", {
   x: text("x").notNull(),
   github: text("github"),
   linkedin: text("linkedin"),
+  location: text("location"),
   stage: text("stage").notNull().default("discovery"),
   score: real("score"),
   researchStatus: text("research_status").default("pending"), // pending, running, done, error
